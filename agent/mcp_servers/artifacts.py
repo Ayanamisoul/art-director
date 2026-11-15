@@ -105,6 +105,11 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
     theme = {"accent": accent_color.lstrip("#")} if accent_color else None
     path = DATA_DIR / f"{_safe_name(name)}.pptx"
     build_presentation(path, data, theme)
+    # sidecar JSON: структура презентации для веб-редактора и правок через чат
+    import json as _json
+    path.with_suffix(".json").write_text(
+        _json.dumps({**data, "theme": theme or {}}, ensure_ascii=False, indent=2),
+        encoding="utf-8")
     return f"Презентация сохранена и прошла проверку: {path} ({len(slides)} слайдов)"
 
 

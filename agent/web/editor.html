@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Редактор презентации — Арт-директор</title>
+<style>
+  :root { --bg: #14110f; --panel: #1e1a17; --accent: #d4a76a; --text: #ece5dd; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Segoe UI", Arial, sans-serif; background: var(--bg); color: var(--text); }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 20px; border-bottom: 1px solid #2c2620; }
+  header h1 { font-size: 16px; color: var(--accent); margin: 0; }
+  header a { color: var(--text); text-decoration: none; font-size: 13px; opacity: .7; }
+  header .spacer { flex: 1; }
+  header button { padding: 8px 20px; border: none; border-radius: 8px; background: var(--accent); color: #14110f; font-weight: bold; cursor: pointer; }
+  .layout { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 53px); }
+  .slides { overflow-y: auto; padding: 16px; border-right: 1px solid #2c2620; }
+  .slide { background: var(--panel); border: 1px solid #2c2620; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
+  .slide .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .slide select, .slide input, .slide textarea, .meta input { width: 100%; padding: 7px 10px; border-radius: 7px; border: 1px solid #3a322b; background: #171310; color: var(--text); font-size: 13px; }
+  .slide textarea { min-height: 90px; font-family: inherit; resize: vertical; }
+  .slide .num { font-size: 12px; color: var(--accent); font-weight: bold; }
+  .del { background: none; border: none; color: #a55; cursor: pointer; font-size: 15px; }
+  .add-btn { width: 100%; padding: 10px; border: 1px dashed #3a322b; border-radius: 10px; background: none; color: var(--text); cursor: pointer; }
+  .meta { padding: 16px; border-bottom: 1px solid #2c2620; display: grid; gap: 8px; }
+  .meta label { font-size: 11px; color: #9a8f83; }
+  .meta input[type=color] { padding: 2px; height: 34px; }
+  .preview { overflow-y: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+  .pv-slide { width: min(90%, 800px); aspect-ratio: 16/9; border-radius: 6px; padding: 5%; box-shadow: 0 4px 24px rgba(0,0,0,.4); position: relative; overflow: hidden; }
+  .pv-title-slide, .pv-closing { color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
+  .pv-content { background: #fff; color: #2b2b2b; }
+  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.3%; }
+  .pv-content h3 { margin: 0 0 4%; font-size: clamp(14px, 2.2vw, 26px); }
+  .pv-content li { font-size: clamp(11px, 1.5vw, 18px); margin-bottom: 2%; }
+  .pv-title-slide h2 { font-size: clamp(18px, 3vw, 36px); margin: 0 0 2%; }
+  .pv-title-slide p, .pv-closing p { font-size: clamp(12px, 1.6vw, 20px); opacity: .85; }
+  #status { font-size: 13px; padding: 8px 20px; }
+  #status.err { color: #e88; } #status.ok { color: #8c8; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Редактор</h1>
+  <a href="/">← к чату</a>
+  <span class="spacer"></span>
+  <span id="status"></span>
+  <button onclick="save()">Сохранить и пересобрать PPTX</button>
+</header>
+<div class="layout">
+  <div class="slides-col">
+    <div class="meta">
+      <label>Название презентации</label><input id="p-title">
+      <label>Подзаголовок</label><input id="p-subtitle">
+      <label>Акцентный цвет</label><input id="p-accent" type="color">
+    </div>
+    <div class="slides" id="slides"></div>
+    <div style="padding:0 16px 16px"><button class="add-btn" onclick="addSlide()">+ Добавить слайд</button></div>
+  </div>
+  <div class="preview" id="preview"></div>
+</div>
+<script>
+const name = location.pathname.split('/').pop();
+let data = { title: '', subtitle: '', slides: [], theme: {} };
+
+const KINDS = { title: 'Титульный', content: 'Текстовый', section: 'Раздел', closing: 'Финальный' };
+
+async function load() {
+  const r = await fetch('/api/presentation/' + name);
+  if (!r.ok) { document.getElementById('status').textContent = 'не найдено: ' + name; return; }
+  data = await r.json();
+  document.getElementById('p-title').value = data.title || '';
+  document.getElementById('p-subtitle').value = data.subtitle || '';
+  document.getElementById('p-accent').value = '#' + ((data.theme && data.theme.accent) || '2E5E4E');
+  renderEditor(); renderPreview();
+}
+
+function addSlide() {
+  data.slides.push({ kind: 'content', title: 'Новый слайд', bullets: [''] });
+  renderEditor(); renderPreview();
+}
+function delSlide(i) { data.slides.splice(i, 1); renderEditor(); renderPreview(); }
+
+function renderEditor() {
+  const box = document.getElementById('slides');
+  box.innerHTML = '';
+  data.slides.forEach((s, i) => {
+    const div = document.createElement('div');
+    div.className = 'slide';
+    div.innerHTML = `
+      <div class="row"><span class="num">${i + 1}</span>
+        <select>${Object.entries(KINDS).map(([k, v]) =>
+          `<option value="${k}" ${s.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
+        <button class="del" title="Удалить">✕</button></div>
+      <input class="t" placeholder="Заголовок слайда" value="${(s.title || '').replace(/"/g, '&quot;')}">
+      <textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join('\n')}</textarea>`;
+    div.querySelector('select').onchange = e => { s.kind = e.target.value; renderPreview(); };
+    div.querySelector('.t').oninput = e => { s.title = e.target.value; renderPreview(); };
+    div.querySelector('.b').oninput = e => {
+      s.bullets = e.target.value.split('\n').filter(x => x.trim()); renderPreview();
+    };
+    div.querySelector('.del').onclick = () => delSlide(i);
+    box.appendChild(div);
+  });
+}
+
+function renderPreview() {
+  const accent = document.getElementById('p-accent').value;
+  const box = document.getElementById('preview');
+  box.innerHTML = '';
+  data.slides.forEach(s => {
+    const div = document.createElement('div');
+    if (s.kind === 'title' || s.kind === 'closing') {
+      div.className = 'pv-slide pv-title-slide';
+      div.style.background = '#1A2E28';
+      div.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
+    } else if (s.kind === 'section') {
+      div.className = 'pv-slide pv-section';
+      div.style.background = accent;
+      div.innerHTML = `<h2>${esc(s.title)}</h2>`;
+    } else {
+      div.className = 'pv-slide pv-content';
+      div.innerHTML = `<div class="bar" style="background:${accent}"></div>
+        <h3 style="color:${accent}">${esc(s.title)}</h3>
+        <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
+    }
+    box.appendChild(div);
+  });
+}
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function save() {
+  data.title = document.getElementById('p-title').value;
+  data.subtitle = document.getElementById('p-subtitle').value;
+  data.theme = { accent: document.getElementById('p-accent').value.slice(1) };
+  const st = document.getElementById('status');
+  const r = await fetch('/api/presentation/' + name, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  });
+  const res = await r.json();
+  if (res.ok) {
+    st.className = 'ok';
+    st.innerHTML = 'Сохранено · <a href="' + res.file + '" target="_blank" style="color:#8c8">открыть PPTX</a>';
+  } else {
+    st.className = 'err';
+    st.textContent = 'Замечания: ' + (res.issues || [res.detail]).join('; ');
+  }
+}
+
+load();
+</script>
+</body>
+</html>
