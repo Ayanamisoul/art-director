@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Кофейня «Утро»</title>
+    <style>
+        :root {
+            --dark-brown: #3a2c1a;
+            --medium-brown: #5c4033;
+            --light-brown: #8b6f47;
+            --cream: #f5f5dc;
+            --accent: #d2b48c;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: var(--dark-brown);
+            color: var(--cream);
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 20px;
+        }
+        header {
+            background: linear-gradient(135deg, var(--dark-brown), var(--medium-brown));
+            padding: 80px 0;
+            text-align: center;
+            border-radius: 0 0 20px 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 20px;
+            color: var(--accent);
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.5);
+        }
+        .hero h1 {
+            font-size: 3.5rem;
+            margin: 0;
+            color: var(--cream);
+        }
+        .hero p {
+            font-size: 1.5rem;
+            margin: 20px 0 30px;
+            color: var(--light-brown);
+        }
+        .btn {
+            display: inline-block;
+            background-color: var(--accent);
+            color: var(--dark-brown);
+            padding: 15px 30px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-weight: bold;
+            font-size: 1.1rem;
+            transition: all 0.3s ease;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        .btn:hover {
+            background-color: var(--light-brown);
+            transform: translateY(-3px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+        }
+        .menu-section {
+            padding: 60px 0;
+            background-color: var(--medium-brown);
+            margin: 40px 0;
+            border-radius: 20px;
+        }
+        .menu-section h2 {
+            text-align: center;
+            font-size: 2.5rem;
+            margin-bottom: 40px;
+            color: var(--cream);
+        }
+        .menu-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+        }
+        .menu-item {
+            background-color: var(--dark-brown);
+            padding: 25px;
+            border-radius: 15px;
+            text-align: center;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+            transition: transform 0.3s ease;
+        }
+        .menu-item:hover {
+            transform: translateY(-5px);
+        }
+        .menu-item h3 {
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            color: var(--accent);
+        }
+        .menu-item p {
+            margin-bottom: 15px;
+            color: var(--light-brown);
+        }
+        .price {
+            font-size: 1.3rem;
+            font-weight: bold;
+            color: var(--cream);
+        }
+        .coffee-icon {
+            font-size: 2.5rem;
+            margin-bottom: 15px;
+        }
+        .contacts {
+            padding: 60px 0;
+            text-align: center;
+            background-color: var(--medium-brown);
+            border-radius: 20px;
+            margin: 40px 0;
+        }
+        .contacts h2 {
+            font-size: 2.5rem;
+            margin-bottom: 30px;
+            color: var(--cream);
+        }
+        .contact-info {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            align-items: center;
+        }
+        .contact-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 1.2rem;
+            color: var(--light-brown);
+        }
+        footer {
+            background-color: var(--dark-brown);
+            padding: 30px 0;
+            text-align: center;
+            border-radius: 20px 20px 0 0;
+        }
+        footer p {
+            margin: 0;
+            color: var(--light-brown);
+        }
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+            .hero p {
+                font-size: 1.2rem;
+            }
+            .menu-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="hero">
+        <div class="container">
+            <div class="logo">☕ Утро</div>
+            <h1>Насладитесь идеальной чашкой кофе</h1>
+            <p>Лучшая кофейня в Москве — где каждый день начинается с аромата</p>
+            <a href="#menu" class="btn">Посмотреть меню</a>
+        </div>
+    </header>
+
+    <section class="menu-section" id="menu">
+        <div class="container">
+            <h2>Наше меню</h2>
+            <div class="menu-grid">
+                <div class="menu-item">
+                    <div class="coffee-icon">☕</div>
+                    <h3>Эспрессо</h3>
+                    <p>Классический итальяский кофе, приготовленный по всем правилам</p>
+                    <div class="price">120 ₽</div>
+                </div>
+                <div class="menu-item">
+                    <div class="coffee-icon">🥛</div>
+                    <h3>Капучино</h3>
+                    <p>Нежный кофе с молоком и воздушной пенкой</p>
+                    <div class="price">180 ₽</div>
+                </div>
+                <div class="menu-item">
+                    <div class="coffee-icon">🍫</div>
+                    <h3>Моккачино</h3>
+                    <p>Шоколадный кофе с молоком и сливками</p>
+                    <div class="price">200 ₽</div>
+                </div>
+                <div class="menu-item">
+                    <div class="coffee-icon">❄️</div>
+                    <h3>Латте</h3>
+                    <p>Мягкий кофе с большим количеством молока</p>
+                    <div class="price">160 ₽</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="contacts">
+        <div class="container">
+            <h2>Контакты</h2>
+            <div class="contact-info">
+                <div class="contact-item">
+                    <span>📍</span>
+                    <span>Москва, ул. Тверская, 10</span>
+                </div>
+                <div class="contact-item">
+                    <span>📞</span>
+                    <span>+7 (495) 123-45-67</span>
+                </div>
+                <div class="contact-item">
+                    <span>⏰</span>
+                    <span>Ежедневно с 8:00 до 22:00</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <div class="container">
+            <p>© 2026 Кофейня «Утро». Все права защищены.</p>
+        </div>
+    </footer>
+</body>
+</html>

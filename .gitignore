@@ -16,6 +16,10 @@ data/
 *.jpeg
 *.svg
 
+# Секреты (НЕ коммитим никогда)
+.env
+*.key
+
 # Системное
 .DS_Store
 Thumbs.db
