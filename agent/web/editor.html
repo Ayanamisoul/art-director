@@ -18,6 +18,7 @@
   .slide { background: var(--panel); border: 1px solid #2c2620; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
   .slide .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
   .slide select, .slide input, .slide textarea, .meta input { width: 100%; padding: 7px 10px; border-radius: 7px; border: 1px solid #3a322b; background: #171310; color: var(--text); font-size: 13px; }
+  .slide input.t { margin-bottom: 8px; }
   .slide textarea { min-height: 90px; font-family: inherit; resize: vertical; }
   .slide .num { font-size: 12px; color: var(--accent); font-weight: bold; }
   .del { background: none; border: none; color: #a55; cursor: pointer; font-size: 15px; }
@@ -26,15 +27,16 @@
   .meta label { font-size: 11px; color: #9a8f83; }
   .meta input[type=color] { padding: 2px; height: 34px; }
   .preview { overflow-y: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
-  .pv-slide { width: min(90%, 800px); aspect-ratio: 16/9; border-radius: 6px; padding: 5%; box-shadow: 0 4px 24px rgba(0,0,0,.4); position: relative; overflow: hidden; }
+  .pv-slide { width: min(90%, 800px); aspect-ratio: 16/9; border-radius: 6px; padding: 4% 5%; box-shadow: 0 4px 24px rgba(0,0,0,.4); position: relative; overflow: hidden; }
   .pv-title-slide, .pv-closing { color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
   .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
   .pv-content { background: #fff; color: #2b2b2b; }
   .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.3%; }
-  .pv-content h3 { margin: 0 0 4%; font-size: clamp(14px, 2.2vw, 26px); }
-  .pv-content li { font-size: clamp(11px, 1.5vw, 18px); margin-bottom: 2%; }
-  .pv-title-slide h2 { font-size: clamp(18px, 3vw, 36px); margin: 0 0 2%; }
-  .pv-title-slide p, .pv-closing p { font-size: clamp(12px, 1.6vw, 20px); opacity: .85; }
+  .pv-content h3 { margin: 0 0 3%; font-size: clamp(13px, 1.9vw, 22px); }
+  .pv-content ul { margin: 0; padding-left: 1.2em; }
+  .pv-content li { font-size: clamp(10px, 1.35vw, 15px); margin-bottom: 1.5%; line-height: 1.35; }
+  .pv-title-slide h2 { font-size: clamp(17px, 2.6vw, 32px); margin: 0 0 2%; }
+  .pv-title-slide p, .pv-closing p { font-size: clamp(11px, 1.5vw, 18px); opacity: .85; }
   #status { font-size: 13px; padding: 8px 20px; }
   #status.err { color: #e88; } #status.ok { color: #8c8; }
 </style>
@@ -87,16 +89,22 @@ function renderEditor() {
   data.slides.forEach((s, i) => {
     const div = document.createElement('div');
     div.className = 'slide';
+    const isTitleLike = (s.kind === 'title' || s.kind === 'closing');
     div.innerHTML = `
       <div class="row"><span class="num">${i + 1}</span>
         <select>${Object.entries(KINDS).map(([k, v]) =>
           `<option value="${k}" ${s.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
         <button class="del" title="Удалить">✕</button></div>
       <input class="t" placeholder="Заголовок слайда" value="${(s.title || '').replace(/"/g, '&quot;')}">
-      <textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join('\n')}</textarea>`;
-    div.querySelector('select').onchange = e => { s.kind = e.target.value; renderPreview(); };
+      ${isTitleLike
+        ? `<input class="s" placeholder="Подзаголовок" value="${(s.subtitle || '').replace(/"/g, '&quot;')}">`
+        : `<textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join('\n')}</textarea>`}`;
+    div.querySelector('select').onchange = e => { s.kind = e.target.value; renderEditor(); renderPreview(); };
     div.querySelector('.t').oninput = e => { s.title = e.target.value; renderPreview(); };
-    div.querySelector('.b').oninput = e => {
+    const sub = div.querySelector('.s');
+    if (sub) sub.oninput = e => { s.subtitle = e.target.value; renderPreview(); };
+    const bul = div.querySelector('.b');
+    if (bul) bul.oninput = e => {
       s.bullets = e.target.value.split('\n').filter(x => x.trim()); renderPreview();
     };
     div.querySelector('.del').onclick = () => delSlide(i);
