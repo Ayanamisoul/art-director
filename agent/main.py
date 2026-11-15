@@ -54,7 +54,7 @@ async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox,
                 result = await toolbox.call(name, args)
             except Exception as exc:
                 result = f"ошибка инструмента: {exc}"
-            print(f"  [tool] -> {result[:120]}")
+            print(f"  [tool] -> {result[:400]}")
             messages.append({
                 "role": "tool",
                 "tool_call_id": call["id"],
