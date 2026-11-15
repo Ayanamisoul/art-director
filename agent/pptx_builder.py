@@ -16,6 +16,7 @@
   ]
 }
 """
+import re
 from pathlib import Path
 
 from pptx import Presentation
@@ -38,13 +39,41 @@ DEFAULT_THEME = {
 MAX_BULLETS = 6        # больше — перегруз слайда
 MAX_BULLET_LEN = 140   # символов в буллете
 
+# Модели часто используют свои имена полей — принимаем синонимы.
+_KIND_ALIASES = {
+    "text": "content", "bullets": "content", "list": "content",
+    "cover": "title", "intro": "title",
+    "end": "closing", "final": "closing", "contacts": "closing",
+}
+_BULLET_ALIASES = ("bullets", "content", "points", "items", "text")
+
+
+def normalize_slide(slide: dict) -> dict:
+    """Приводит слайд от модели к каноническому виду.
+    kind: type/cover/bullets/... -> title|content|section|closing
+    буллеты: ищем в bullets/content/points/items; строку режем на предложения."""
+    s = dict(slide)
+    kind = str(s.get("kind") or s.get("type") or "content").lower()
+    s["kind"] = _KIND_ALIASES.get(kind, kind)
+    bullets = None
+    for key in _BULLET_ALIASES:
+        if s.get(key):
+            bullets = s[key]
+            break
+    if isinstance(bullets, str):
+        parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", bullets) if p.strip()]
+        bullets = parts if len(bullets) > MAX_BULLET_LEN else [bullets]
+    s["bullets"] = bullets or []
+    return s
+
 
 def _rgb(hex_color: str) -> RGBColor:
     return RGBColor.from_string(hex_color.lstrip("#"))
 
 
 def validate_presentation(data: dict) -> list[str]:
-    """Проверки структуры ДО сборки файла. Пустой список = всё ок."""
+    """Проверки структуры ДО сборки файла. Пустой список = всё ок.
+    Ожидает уже нормализованные слайды (normalize_slide)."""
     issues: list[str] = []
     slides = data.get("slides")
     if not isinstance(slides, list) or not slides:

@@ -20,7 +20,7 @@ from pathlib import Path
 from mcp.server.mcpserver import MCPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # доступ к agent/
-from pptx_builder import build_presentation, validate_presentation
+from pptx_builder import build_presentation, normalize_slide, validate_presentation
 from validation import validate_html
 
 # <репо>/data/artifacts/ — вне git (см. .gitignore)
@@ -89,13 +89,15 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
                       accent_color: str = "") -> str:
     """Собрать и сохранить презентацию .pptx (открывается и редактируется в PowerPoint).
     name — короткое имя файла; title/subtitle — заголовок презентации;
-    slides — список слайдов, каждый: {"kind": "title|content|section|closing",
-    "title": "...", "subtitle": "..." (для title/closing), "bullets": [...] (для content)}.
-    Правила: первый слайд kind=title, последний kind=closing; на content-слайде
-    до 6 буллетов, каждый до 140 символов. accent_color — hex бренда, напр. "2E5E4E".
+    slides — список слайдов, каждый: {"kind": "title|text|section|closing",
+    "title": "заголовок слайда", "bullets": ["пункт 1", "пункт 2"]}.
+    Поле с пунктами называется СТРОГО "bullets" (список строк).
+    Правила: первый слайд kind=title, последний kind=closing; на текстовом слайде
+    до 6 пунктов, каждый до 140 символов. accent_color — hex бренда, напр. "2E5E4E".
     Перед сохранением структура проверяется: при замечаниях файл НЕ создаётся —
     исправь их и вызови инструмент снова."""
     data = {"title": title, "subtitle": subtitle, "slides": slides}
+    data["slides"] = [normalize_slide(s) for s in slides]
     issues = validate_presentation(data)
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "
