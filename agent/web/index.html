@@ -192,6 +192,24 @@ form.addEventListener('submit', async (e) => {
 });
 
 refreshFiles();
+
+document.getElementById('up-img').addEventListener('change', e => upload(e, '/api/assets'));
+document.getElementById('up-tpl').addEventListener('change', e => upload(e, '/api/templates'));
+
+async function upload(e, url) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const r = await fetch(url, { method: 'POST', body: fd });
+  const res = await r.json();
+  if (res.ok) {
+    addMsg('agent', `Загружено: ${res.name}. Теперь можно попросить агента использовать это в презентации — он видит файлы через list_images / list_templates.`);
+  } else {
+    addMsg('agent', 'Ошибка загрузки: ' + (res.detail || 'неизвестно'));
+  }
+  e.target.value = '';
+}
 </script>
 </body>
 </html>

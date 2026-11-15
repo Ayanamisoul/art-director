@@ -17,7 +17,7 @@ except Exception:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # импорты agent/*
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -33,8 +33,12 @@ import json as jsonlib
 import re
 
 ARTIFACTS_SERVER = Path(__file__).parent / "mcp_servers" / "artifacts.py"
-DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "artifacts"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data" / "artifacts"
+ASSETS_DIR = ROOT / "data" / "assets"
+TEMPLATES_DIR = ROOT / "data" / "templates"
+for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 WEB_DIR = Path(__file__).parent / "web"
 
 toolbox = MCPToolbox(ARTIFACTS_SERVER)
@@ -51,6 +55,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Арт-директор", lifespan=lifespan)
 app.mount("/files", StaticFiles(directory=DATA_DIR), name="files")
+app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 
 class ChatRequest(BaseModel):
@@ -131,11 +136,17 @@ def _last_artifact_summary(messages: list[dict]) -> str | None:
                 continue
             if fname == "save_presentation":
                 lines = [f"Презентация «{args.get('title', '')}» / {args.get('subtitle', '')}"]
+                if args.get("template"):
+                    lines.append(f"Использован шаблон: {args['template']}")
+                if args.get("accent_color"):
+                    lines.append(f"Акцентный цвет: {args['accent_color']}")
                 for s in args.get("slides", []):
                     bullets = s.get("bullets") or []
                     if isinstance(bullets, str):
                         bullets = [bullets]
-                    lines.append(f"Слайд: {s.get('title', '')} — " + "; ".join(map(str, bullets))[:300])
+                    image_note = f" [картинка: {s['image']}]" if s.get("image") else ""
+                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note} — "
+                                 + "; ".join(map(str, bullets))[:300])
                 return "\n".join(lines)[:3000]
             text = _visible_text(args.get("html", ""))
             return "Лендинг, видимый текст:\n" + " ".join(text.split())[:2000]
@@ -186,3 +197,38 @@ async def list_files():
     files = sorted(p.name for p in DATA_DIR.iterdir()
                    if p.is_file() and p.suffix != ".json")  # .json — служебные сайдкары
     return {"files": files}
+
+
+# --- загрузки пользователя: изображения и шаблоны (local-first) ---
+
+def _safe_filename(raw: str) -> str:
+    name = Path(raw).name
+    if not name or name.startswith("."):
+        raise HTTPException(400, "недопустимое имя файла")
+    return name
+
+
+@app.post("/api/assets")
+async def upload_asset(file: UploadFile):
+    name = _safe_filename(file.filename or "image.png")
+    (ASSETS_DIR / name).write_bytes(await file.read())
+    return {"ok": True, "name": name}
+
+
+@app.post("/api/templates")
+async def upload_template(file: UploadFile):
+    name = _safe_filename(file.filename or "template.pptx")
+    if not name.lower().endswith(".pptx"):
+        raise HTTPException(400, "шаблон должен быть .pptx")
+    (TEMPLATES_DIR / name).write_bytes(await file.read())
+    return {"ok": True, "name": name}
+
+
+@app.get("/api/assets")
+async def list_assets():
+    return {"files": sorted(p.name for p in ASSETS_DIR.iterdir() if p.is_file())}
+
+
+@app.get("/api/templates")
+async def list_templates():
+    return {"files": sorted(p.name for p in TEMPLATES_DIR.iterdir() if p.is_file())}

@@ -17,6 +17,7 @@
 }
 """
 import re
+import zipfile
 from pathlib import Path
 
 from pptx import Presentation
@@ -26,6 +27,10 @@ from pptx.util import Emu, Inches, Pt
 
 SLIDE_W = Inches(13.333)  # 16:9
 SLIDE_H = Inches(7.5)
+
+# папки локальных ресурсов пользователя (local-first)
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "data" / "assets"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "data" / "templates"
 
 DEFAULT_THEME = {
     "bg": "FFFFFF",        # фон контентных слайдов
@@ -98,18 +103,53 @@ def validate_presentation(data: dict) -> list[str]:
             if len(str(b)) > MAX_BULLET_LEN:
                 issues.append(f"слайд {i}: буллет длиннее {MAX_BULLET_LEN} символов — сократи")
                 break
+        image_name = slide.get("image")
+        if image_name and not (ASSETS_DIR / Path(str(image_name)).name).exists():
+            issues.append(f"слайд {i}: изображение «{image_name}» не найдено — "
+                          f"вызови list_images и выбери из списка")
     if slides[0].get("kind", "content") != "title":
         issues.append("первым должен быть титульный слайд (kind=title)")
     return issues
 
 
-def build_presentation(path: Path, data: dict, theme: dict | None = None) -> None:
-    """Собрать .pptx по структуре. Путь должен заканчиваться на .pptx."""
+def theme_accent_from_template(template_path: Path) -> str | None:
+    """Достаёт accent1 из темы .pptx-шаблона (ppt/theme/theme1.xml)."""
+    try:
+        with zipfile.ZipFile(template_path) as z:
+            xml = z.read("ppt/theme/theme1.xml").decode("utf-8", errors="replace")
+        m = re.search(r'<a:accent1>\s*<a:srgbClr val="([0-9A-Fa-f]{6})"', xml)
+        return m.group(1) if m else None
+    except Exception:
+        return None
+
+
+def build_presentation(path: Path, data: dict, theme: dict | None = None,
+                       template: Path | None = None) -> None:
+    """Собрать .pptx по структуре. Путь должен заканчиваться на .pptx.
+    Если задан template — берём его мастер-слайды/тему, существующие слайды выкидываем."""
     t = {**DEFAULT_THEME, **(theme or {})}
-    prs = Presentation()
+    if template and template.exists():
+        prs = Presentation(str(template))
+        # выкидываем слайды шаблона вместе со связями (иначе старые части
+        # остаются в пакете и файл может получиться битым)
+        xml_slides = prs.slides._sldIdLst
+        for slide_id in list(xml_slides):
+            rel_id = slide_id.get(
+                "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id"
+            )
+            if rel_id:
+                prs.part.drop_rel(rel_id)
+            xml_slides.remove(slide_id)
+        if not (theme or {}).get("accent"):
+            accent = theme_accent_from_template(template)
+            if accent:
+                t["accent"] = accent
+        blank = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[-1]
+    else:
+        prs = Presentation()
+        blank = prs.slide_layouts[6]
     prs.slide_width = SLIDE_W
     prs.slide_height = SLIDE_H
-    blank = prs.slide_layouts[6]  # пустой макет — всё рисуем сами
 
     def add_slide(bg_color: str):
         slide = prs.slides.add_slide(blank)
@@ -160,8 +200,13 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None) -> Non
             bar.line.fill.background()
             add_text(slide, Inches(0.7), Inches(0.5), SLIDE_W - Inches(1.4), Inches(1),
                      title, 32, t["accent"], bold=True)
+            # картинка из assets пользователя (необязательно): справа, текст слева
+            image_name = slide_data.get("image")
+            image_path = ASSETS_DIR / Path(str(image_name)).name if image_name else None
+            has_image = bool(image_path and image_path.exists())
+            text_width = Inches(6.4) if has_image else SLIDE_W - Inches(1.8)
             body = slide.shapes.add_textbox(Inches(0.9), Inches(1.7),
-                                            SLIDE_W - Inches(1.8), SLIDE_H - Inches(2.2))
+                                            text_width, SLIDE_H - Inches(2.2))
             frame = body.text_frame
             frame.word_wrap = True
             for i, bullet in enumerate(slide_data.get("bullets") or []):
@@ -169,8 +214,11 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None) -> Non
                 para.space_after = Pt(14)
                 run = para.add_run()
                 run.text = f"•  {bullet}"
-                run.font.size = Pt(22)
+                run.font.size = Pt(22 if len(slide_data.get("bullets") or []) <= 4 else 18)
                 run.font.name = t["font"]
                 run.font.color.rgb = _rgb(t["text"])
+            if has_image:
+                slide.shapes.add_picture(str(image_path), Inches(7.5), Inches(1.7),
+                                         width=Inches(5.2))
 
     prs.save(path)

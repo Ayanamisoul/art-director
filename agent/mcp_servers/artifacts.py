@@ -25,7 +25,10 @@ from validation import validate_html
 
 # <репо>/data/artifacts/ — вне git (см. .gitignore)
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "artifacts"
-DATA_DIR.mkdir(parents=True, exist_ok=True)
+ASSETS_DIR = Path(__file__).resolve().parents[2] / "data" / "assets"
+TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "data" / "templates"
+for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR):
+    d.mkdir(parents=True, exist_ok=True)
 
 CHROME = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
 
@@ -86,31 +89,56 @@ def html_to_pdf(name: str) -> str:
 
 @mcp.tool()
 def save_presentation(name: str, title: str, slides: list[dict], subtitle: str = "",
-                      accent_color: str = "") -> str:
+                      accent_color: str = "", template: str = "") -> str:
     """Собрать и сохранить презентацию .pptx (открывается и редактируется в PowerPoint).
     name — короткое имя файла; title/subtitle — заголовок презентации;
     slides — список слайдов, каждый: {"kind": "title|text|section|closing",
-    "title": "заголовок слайда", "bullets": ["пункт 1", "пункт 2"]}.
+    "title": "заголовок слайда", "bullets": ["пункт 1", "пункт 2"],
+    "image": "имя файла картинки из list_images" (необязательно, для text-слайда)}.
     Поле с пунктами называется СТРОГО "bullets" (список строк).
     Правила: первый слайд kind=title, последний kind=closing; на текстовом слайде
     до 6 пунктов, каждый до 140 символов. accent_color — hex бренда, напр. "2E5E4E".
+    template — имя .pptx-шаблона из list_templates (необязательно): тема/цвета возьмутся из него.
     Перед сохранением структура проверяется: при замечаниях файл НЕ создаётся —
     исправь их и вызови инструмент снова."""
     data = {"title": title, "subtitle": subtitle, "slides": slides}
     data["slides"] = [normalize_slide(s) for s in slides]
     issues = validate_presentation(data)
+    template_path = None
+    if template:
+        template_path = TEMPLATES_DIR / Path(template).name
+        if not template_path.exists():
+            issues.append(f"шаблон «{template}» не найден — вызови list_templates")
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "
                 + "\n- ".join(issues))
     theme = {"accent": accent_color.lstrip("#")} if accent_color else None
     path = DATA_DIR / f"{_safe_name(name)}.pptx"
-    build_presentation(path, data, theme)
+    build_presentation(path, data, theme, template=template_path)
     # sidecar JSON: структура презентации для веб-редактора и правок через чат
     import json as _json
     path.with_suffix(".json").write_text(
         _json.dumps({**data, "theme": theme or {}}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     return f"Презентация сохранена и прошла проверку: {path} ({len(slides)} слайдов)"
+
+
+@mcp.tool()
+def list_images() -> str:
+    """Список изображений, загруженных пользователем (логотипы, фото).
+    Их имена можно ставить в поле "image" текстового слайда."""
+    files = sorted(p.name for p in ASSETS_DIR.iterdir() if p.is_file())
+    return "Изображения пользователя:\n" + "\n".join(files) if files else \
+        "Пользователь пока не загрузил изображений."
+
+
+@mcp.tool()
+def list_templates() -> str:
+    """Список .pptx-шаблонов, загруженных пользователем.
+    Имя шаблона можно передать в save_presentation параметром template."""
+    files = sorted(p.name for p in TEMPLATES_DIR.iterdir() if p.is_file())
+    return "Шаблоны пользователя:\n" + "\n".join(files) if files else \
+        "Пользователь пока не загрузил шаблонов."
 
 
 @mcp.tool()
