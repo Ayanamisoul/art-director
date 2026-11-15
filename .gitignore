@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+
+# Локальные данные пользователей (НЕ коммитим — local-first)
+data/
+*.pdf
+*.pptx
+*.png
+*.jpg
+*.jpeg
+*.svg
+
+# Системное
+.DS_Store
+Thumbs.db
