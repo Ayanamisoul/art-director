@@ -29,15 +29,22 @@ AI-агент для генерации дизайн-материалов (пр�
 ## Агент (agent/)
 
 ```bash
-cd agent
-py main.py
+# веб-клиент (основной): чат + выбор бэкенда + панель файлов
+cd agent && py -m uvicorn web:app --port 8000   # дальше http://localhost:8000
+
+# или CLI для отладки
+cd agent && py main.py
 # команды в чате: /backend ollama|xkiro, /skill chat|landing, /new, /exit
 ```
 
 - `config.py` — читает `.env`, описывает бэкенды (локальная Ollama и шлюз xkiro)
-- `llm.py` — один клиент под любой OpenAI-совместимый API
+- `llm.py` — один клиент под любой OpenAI-совместимый API (вкл. tool calls)
+- `mcp_client.py` — поднимает MCP-сервер и отдаёт его инструменты модели
+- `mcp_servers/artifacts.py` — инструменты: save_html (с валидацией), html_to_pdf, list_artifacts
+- `validation.py` — блок валидации HTML (код, не промпт)
 - `prompts.py` — системные промпты/скиллы (позже переедут в админку)
-- `main.py` — CLI-цикл «сообщение → LLM → ответ»; веб-клиент будет позже
+- `main.py` — CLI + агентный цикл `agent_reply` (его же использует веб)
+- `web.py`, `web/index.html` — веб-клиент (FastAPI + одна страница)
 
 ## Быстрый старт
 

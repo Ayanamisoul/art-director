@@ -24,8 +24,11 @@ ARTIFACTS_SERVER = Path(__file__).parent / "mcp_servers" / "artifacts.py"
 MAX_TOOL_ROUNDS = 5  # защита от бесконечного цикла вызовов
 
 
-async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox) -> str:
-    """Один полный ход агента: модель + при необходимости инструменты."""
+async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox,
+                      log: list[str] | None = None) -> str:
+    """Один полный ход агента: модель + при необходимости инструменты.
+    В log (если передан) пишутся строки вида «вызван save_html(...)» —
+    их веб-клиент показывает пользователю."""
     tools = toolbox.openai_tools()
     for _ in range(MAX_TOOL_ROUNDS):
         message = complete(backend["base_url"], backend["api_key"], backend["model"],
@@ -41,12 +44,17 @@ async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox) 
                 args = json.loads(call["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
-            print(f"  ⚙ инструмент: {name}({args})")
+            short_args = {k: (v[:60] + "…" if isinstance(v, str) and len(v) > 60 else v)
+                          for k, v in args.items()}
+            line = f"{name}({short_args})"
+            print(f"  [tool] {line}")
+            if log is not None:
+                log.append(line)
             try:
                 result = await toolbox.call(name, args)
             except Exception as exc:
                 result = f"ошибка инструмента: {exc}"
-            print(f"  ⚙ результат: {result[:120]}")
+            print(f"  [tool] -> {result[:120]}")
             messages.append({
                 "role": "tool",
                 "tool_call_id": call["id"],

@@ -13,10 +13,14 @@ Local-first: всё пишется в <репо>/data/artifacts/ на машин
 """
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # доступ к agent/
+from validation import validate_html
 
 # <репо>/data/artifacts/ — вне git (см. .gitignore)
 DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "artifacts"
@@ -38,10 +42,17 @@ def _safe_name(name: str) -> str:
 @mcp.tool()
 def save_html(name: str, html: str) -> str:
     """Сохранить HTML-страницу на диск. name — короткое имя без расширения,
-    html — полный код страницы. Возвращает путь к файлу."""
+    html — полный код страницы. Перед сохранением страница проходит проверку
+    качества: если есть замечания, они возвращаются в ответе — исправь их
+    и вызови save_html ещё раз с исправленным кодом."""
     path = DATA_DIR / f"{_safe_name(name)}.html"
     path.write_text(html, encoding="utf-8")
-    return f"Сохранено: {path}"
+    issues = validate_html(html)
+    if issues:
+        return (f"Сохранено: {path}. НО есть замечания валидации:\n- "
+                + "\n- ".join(issues)
+                + "\nИсправь их и сохрани заново тем же именем.")
+    return f"Сохранено и прошло проверку: {path}"
 
 
 @mcp.tool()
