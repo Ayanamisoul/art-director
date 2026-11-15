@@ -28,8 +28,10 @@ mcp = MCPServer("artifacts")
 
 
 def _safe_name(name: str) -> str:
-    """Только буквы/цифры/дефис/подчёркивание — защита от путей вида ../.."""
-    slug = re.sub(r"[^\w\-]", "_", name.strip())
+    """Только буквы/цифры/дефис/подчёркивание — защита от путей вида ../..
+    Плюс срезаем расширение, если модель передала его вопреки docstring'у."""
+    name = re.sub(r"\.(html?|pdf)$", "", name.strip(), flags=re.IGNORECASE)
+    slug = re.sub(r"[^\w\-]", "_", name)
     return slug or "artifact"
 
 
