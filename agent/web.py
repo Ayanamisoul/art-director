@@ -10,6 +10,11 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+try:
+    sys.stdout.reconfigure(errors="replace")  # cp1251-консоль vs эмодзи в логах
+except Exception:
+    pass
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # импорты agent/*
 
 from fastapi import FastAPI, HTTPException
@@ -25,6 +30,7 @@ from pptx_builder import build_presentation, normalize_slide, validate_presentat
 from validation import _visible_text, validate_html
 from main import agent_reply
 import json as jsonlib
+import re
 
 ARTIFACTS_SERVER = Path(__file__).parent / "mcp_servers" / "artifacts.py"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data" / "artifacts"
@@ -95,8 +101,21 @@ async def chat_endpoint(req: ChatRequest):
             artifact2 = _last_artifact_summary(state["messages"])
             validation = semantic_check(backend, req.message, artifact2) if artifact2 else validation
 
+    # --- что сохранили: для мгновенного предпросмотра в чате ---
+    saved = {"presentation": None, "html": None}
+    for message in state["messages"]:
+        if message.get("role") != "tool":
+            continue
+        content = message.get("content") or ""
+        m = re.search(r"Презентация сохранена и прошла проверку: .+?([^\\/]+)\.pptx", content)
+        if m:
+            saved["presentation"] = m.group(1)
+        m = re.search(r"Сохранено и прошло проверку: .+?([^\\/]+)\.html", content)
+        if m:
+            saved["html"] = m.group(1)
+
     return {"session_id": session_id, "answer": answer, "tools": tool_log,
-            "backend": state["backend"], "validation": validation}
+            "backend": state["backend"], "validation": validation, "saved": saved}
 
 
 def _last_artifact_summary(messages: list[dict]) -> str | None:

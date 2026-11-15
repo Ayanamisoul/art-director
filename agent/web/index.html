@@ -25,9 +25,24 @@
   .composer button:disabled { opacity: .5; cursor: wait; }
   aside { border-left: 1px solid #2c2620; padding: 16px; overflow-y: auto; }
   aside h2 { font-size: 14px; color: var(--accent); margin-top: 0; }
-  aside a { display: block; color: var(--text); text-decoration: none; padding: 8px 10px; border-radius: 8px; font-size: 13px; word-break: break-all; }
-  aside a:hover { background: var(--panel); }
+  aside a.file-link { display: block; color: var(--text); text-decoration: none; padding: 8px 10px; font-size: 13px; word-break: break-all; }
+  aside a.file-link:hover { background: var(--panel); border-radius: 8px; }
+  a.edit-btn { display: block; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); text-decoration: none; font-size: 12px; text-align: center; }
+  a.edit-btn:hover { background: var(--accent); color: #14110f; }
   .hint { font-size: 12px; color: #9a8f83; margin-bottom: 12px; }
+  /* предпросмотр презентации в чате */
+  .pv-wrap { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+  .pv-slide { width: 100%; aspect-ratio: 16/9; border-radius: 6px; padding: 5%; position: relative; overflow: hidden; box-shadow: 0 4px 18px rgba(0,0,0,.4); }
+  .pv-title-slide { color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
+  .pv-content { background: #fff; color: #2b2b2b; }
+  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.3%; }
+  .pv-content h3 { margin: 0 0 4%; font-size: 15px; }
+  .pv-content li { font-size: 12px; margin-bottom: 2%; }
+  .pv-title-slide h2 { font-size: 19px; margin: 0 0 2%; }
+  .pv-title-slide p { font-size: 12px; opacity: .85; }
+  iframe.landing-pv { width: 100%; aspect-ratio: 16/10; border: none; border-radius: 6px; background: #fff; margin-top: 10px; }
+  a.big-edit-btn { display: inline-block; margin-top: 10px; padding: 8px 18px; background: var(--accent); color: #14110f; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; }
 </style>
 </head>
 <body>
@@ -60,7 +75,7 @@ const form = document.getElementById('form');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 
-function addMsg(role, text, tools, validation) {
+function addMsg(role, text, tools, validation, saved) {
   const div = document.createElement('div');
   div.className = 'msg ' + role;
   div.textContent = text;
@@ -81,7 +96,51 @@ function addMsg(role, text, tools, validation) {
   }
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
+  if (saved && saved.presentation) renderSlidesPreview(div, saved.presentation);
+  if (saved && saved.html) renderHtmlPreview(div, saved.html);
   return div;
+}
+
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function renderSlidesPreview(container, name) {
+  const r = await fetch('/api/presentation/' + encodeURIComponent(name));
+  if (!r.ok) return;
+  const data = await r.json();
+  const accent = '#' + ((data.theme && data.theme.accent) || '2E5E4E');
+  const wrap = document.createElement('div');
+  wrap.className = 'pv-wrap';
+  data.slides.forEach(s => {
+    const d = document.createElement('div');
+    if (s.kind === 'title' || s.kind === 'closing') {
+      d.className = 'pv-slide pv-title-slide';
+      d.style.background = '#1A2E28';
+      d.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
+    } else if (s.kind === 'section') {
+      d.className = 'pv-slide pv-section';
+      d.style.background = accent;
+      d.innerHTML = `<h2>${esc(s.title)}</h2>`;
+    } else {
+      d.className = 'pv-slide pv-content';
+      d.innerHTML = `<div class="bar" style="background:${accent}"></div>
+        <h3 style="color:${accent}">${esc(s.title)}</h3>
+        <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
+    }
+    wrap.appendChild(d);
+  });
+  container.appendChild(wrap);
+  const btn = document.createElement('a');
+  btn.className = 'big-edit-btn';
+  btn.href = '/editor/' + encodeURIComponent(name);
+  btn.textContent = '✏️ Открыть в редакторе';
+  container.appendChild(btn);
+}
+
+function renderHtmlPreview(container, name) {
+  const f = document.createElement('iframe');
+  f.className = 'landing-pv';
+  f.src = '/files/' + encodeURIComponent(name) + '.html';
+  container.appendChild(f);
 }
 
 async function refreshFiles() {
@@ -90,16 +149,16 @@ async function refreshFiles() {
   filesEl.innerHTML = '';
   data.files.forEach(name => {
     const a = document.createElement('a');
+    a.className = 'file-link';
     a.href = '/files/' + encodeURIComponent(name);
     a.textContent = name;
     a.target = '_blank';
     filesEl.appendChild(a);
     if (name.endsWith('.pptx')) {
       const edit = document.createElement('a');
+      edit.className = 'edit-btn';
       edit.href = '/editor/' + encodeURIComponent(name.replace(/\.pptx$/, ''));
-      edit.textContent = '✏️ редактировать';
-      edit.style.fontSize = '11px';
-      edit.style.opacity = '.7';
+      edit.textContent = '✏️ Редактировать';
       filesEl.appendChild(edit);
     }
   });
@@ -123,7 +182,7 @@ form.addEventListener('submit', async (e) => {
     sessionId = data.session_id;
     thinking.remove();
     if (data.error) addMsg('agent', 'Ошибка: ' + data.error, data.tools);
-    else addMsg('agent', data.answer, data.tools, data.validation);
+    else addMsg('agent', data.answer, data.tools, data.validation, data.saved);
     refreshFiles();
   } catch (err) {
     thinking.textContent = 'Ошибка соединения: ' + err;

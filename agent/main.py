@@ -15,6 +15,11 @@ import json
 import sys
 from pathlib import Path
 
+try:
+    sys.stdout.reconfigure(errors="replace")  # Windows-консоль cp1251 не любит эмодзи в логах
+except Exception:
+    pass
+
 from config import BACKENDS, DEFAULT_BACKEND
 from llm import complete
 from mcp_client import MCPToolbox
