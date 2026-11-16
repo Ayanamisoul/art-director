@@ -215,6 +215,7 @@ form.addEventListener('submit', async (e) => {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({message: text, session_id: sessionId, backend: document.getElementById('backend').value,
         template: document.getElementById('template').value,
+        template_images: document.getElementById('no-template-photos').checked ? 'remove' : '',
         output_format: document.getElementById('outformat').value}),
     });
     const data = await r.json();

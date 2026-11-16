@@ -140,7 +140,8 @@ def theme_accent_from_template(template_path: Path) -> str | None:
 
 
 def build_presentation(path: Path, data: dict, theme: dict | None = None,
-                       template: Path | None = None) -> None:
+                       template: Path | None = None,
+                       template_images: str = "auto") -> None:
     """Собрать .pptx по структуре. Путь должен заканчиваться на .pptx.
 
     Если задан template — работаем «по скелету»: слайды шаблона остаются как есть
@@ -158,7 +159,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
     if template and template.exists() and template.suffix.lower() == ".pdf":
         # PDF-шаблон: страницы становятся фонами слайдов, текст — на карточках
         prs = Presentation()
-        _build_on_pdf(prs, data, t, template)
+        _build_on_pdf(prs, data, t, template, remove_images=template_images)
         prs.save(path)
         return
     if template and template.exists():
@@ -605,10 +606,17 @@ def _fill_placeholder(slide, types, text, bold=False, size=None):
 
 # ---------- сборка по PDF-шаблону ----------
 
-def _rasterize_pdf(template: Path) -> list[Path]:
-    """Страницы PDF -> PNG-картинки (кэш в data/templates/pdf_cache/<stem>/)."""
+def _rasterize_pdf(template: Path, remove_images: str = "auto") -> list[Path]:
+    """Страницы PDF -> PNG-картинки (кэш в data/templates/pdf_cache/<stem>-<режим>/).
+
+    remove_images: "auto" — чужие фото распознаются и удаляются, гладкие фоны
+    (градиенты/паттерны) остаются; "remove" — убрать все картинки; "keep" —
+    убрать только мелкие (<60% страницы).
+    Логика на страницу: (1) вырезаем чужой ТЕКСТ по спанам цветом окружения
+    и счищаем векторный декор, задетый вырезкой; (2) уже на очищенной странице
+    решаем судьбу КАРТИНОК и вырезаем лишние."""
     import fitz
-    cache = template.parent / "pdf_cache" / template.stem
+    cache = template.parent / "pdf_cache" / f"{template.stem}-{remove_images}"
     pdf_mtime = template.stat().st_mtime
     marker = cache / "source.mtime"
     pages = sorted(cache.glob("p*.png"))
@@ -624,25 +632,44 @@ def _rasterize_pdf(template: Path) -> list[Path]:
         old_png.unlink()
     zoom = 1600 / max(doc[0].rect.width, 1)
     for i, page in enumerate(doc):
-        # вырезаем ЧУЖОЙ текст страницы (наш будет поверх). По спанам — точнее,
-        # чем по блокам: не остаются обрезки крупных букв
-        for span_rect in _span_rects(page):
-            page.add_redact_annot(span_rect, fill=_block_fill_color(page, span_rect))
+        corner = _corner_color(page)
+        page_area = page.rect.width * page.rect.height
+
+        # --- проход 1: ЧУЖОЙ ТЕКСТ (по словам — накрывает и маркеры списков) ---
+        for word_rect in _word_rects(page):
+            page.add_redact_annot(word_rect, fill=_block_fill_color(page, word_rect))
         if i == 0:
             # титульная страница: сносим центральную полосу и правую часть шапки
             # (там их заголовок/меню и декор), оставляем логотип слева сверху
             r = page.rect
-            bg = _corner_color(page)
             page.add_redact_annot(
-                fitz.Rect(0, r.height * 0.26, r.width, r.height * 0.90), fill=bg)
+                fitz.Rect(0, r.height * 0.26, r.width, r.height * 0.90), fill=corner)
             page.add_redact_annot(
-                fitz.Rect(r.width * 0.30, 0, r.width, r.height * 0.25), fill=bg)
-        if page.get_text() or page.get_images():
-            try:  # сносим и векторный декор, покрытый вырезкой (палки-буквы и т.п.)
-                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE,
-                                      graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
+                fitz.Rect(r.width * 0.30, 0, r.width, r.height * 0.25), fill=corner)
+        graphics_mode = (fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED if i == 0
+                         else fitz.PDF_REDACT_LINE_ART_REMOVE_IF_TOUCHED)
+        if page.get_text():
+            try:
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE,
+                                      graphics=graphics_mode)
             except TypeError:
                 page.apply_redactions()
+
+        # --- проход 2: ЧУЖИЕ КАРТИНКИ (решаем на уже очищенной странице) ---
+        for img in page.get_images(full=True):
+            for rect in page.get_image_rects(img[0]):
+                area_frac = (rect.width * rect.height) / page_area
+                drop = area_frac < 0.6
+                if not drop and remove_images == "all":
+                    drop = True
+                elif not drop and remove_images == "auto":
+                    drop = _is_photo(page, rect)
+                if drop:
+                    page.add_redact_annot(fitz.Rect(rect) + (-2, -2, 2, 2),
+                                          fill=_block_fill_color(page, rect))
+        if page.get_images():
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE)
+
         page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).save(
             str(cache / f"p{i + 1}.png"))
     marker.write_text(str(pdf_mtime))
@@ -686,17 +713,11 @@ def _corner_color(page) -> tuple:
     except Exception:
         return (1, 1, 1)
 
-def _span_rects(page) -> list:
-    """Точные прямоугольники всех текстовых спанов страницы (для вырезки)."""
+def _word_rects(page) -> list:
+    """Прямоугольники всех слов страницы (для вырезки чужого текста)."""
     import fitz
-    rects = []
-    for block in page.get_text("dict").get("blocks", []):
-        for line in block.get("lines", []):
-            for span in line.get("spans", []):
-                bbox = span.get("bbox")
-                if bbox and span.get("text", "").strip():
-                    rects.append(fitz.Rect(bbox) + (-1, -1, 1, 1))
-    return rects
+    return [fitz.Rect(w[:4]) + (-2, -2, 2, 2) for w in page.get_text("words")
+            if w[4].strip()]
 
 
 def _dominant_accent(page) -> tuple | None:
@@ -723,6 +744,28 @@ def _dominant_accent(page) -> tuple | None:
         return ((key[0] << 4) / 255, (key[1] << 4) / 255, (key[2] << 4) / 255)
     except Exception:
         return None
+
+def _is_photo(page, rect) -> bool:
+    """Похоже ли изображение на фотографию (высокая динамика яркости),
+    а не на гладкий фон/градиент/паттерн."""
+    try:
+        pix = page.get_pixmap(clip=rect, matrix=fitz.Matrix(0.035, 0.035))
+        w, h, n, data = pix.width, pix.height, pix.n, pix.samples
+        diffs, prev = [], None
+        for y in range(h):
+            row = y * w * n
+            for x in range(w):
+                off = row + x * n
+                lum = (data[off] + data[off + 1] + data[off + 2]) / 3
+                if prev is not None:
+                    diffs.append(abs(lum - prev))
+                prev = lum
+        if not diffs:
+            return False
+        return sum(diffs) / len(diffs) > 7
+    except Exception:
+        return False
+
 
 def _card(slide, prs, x_frac, y_frac, w_frac, h_frac, alpha_pct=88):
     """Полупрозрачная белая карточка — читаемый фон для текста поверх дизайна PDF."""
@@ -759,13 +802,14 @@ def _pdf_text(slide, prs, text, x_frac, y_frac, w_frac, size, color,
     return box
 
 
-def _build_on_pdf(prs, data: dict, t: dict, template: Path) -> None:
+def _build_on_pdf(prs, data: dict, t: dict, template: Path,
+                  remove_images: str = "auto") -> None:
     """Слайды поверх страниц PDF: фон — картинка страницы, текст — на карточке.
 
     Титул берёт страницу 1, контентные слайды — страницы 2..N (циклически),
     финал — последнюю страницу. Пропорции слайда = пропорции страницы PDF.
     """
-    pages = _rasterize_pdf(template)
+    pages = _rasterize_pdf(template, remove_images=remove_images)
     if not pages:
         raise RuntimeError(f"не удалось растрировать PDF-шаблон {template.name}")
     import fitz

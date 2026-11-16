@@ -70,7 +70,8 @@ def _carry_over_template(name: str, theme: dict | None, template: str) -> tuple[
 
 
 def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
-                theme: dict | None = None, template: str = "") -> list[str]:
+                theme: dict | None = None, template: str = "",
+                template_images: str = "auto") -> list[str]:
     """Сохранить презентацию из веб-редактора. Возвращает список замечаний."""
     payload = {"title": title, "subtitle": subtitle,
                "slides": [normalize_slide(s) for s in slides]}
@@ -82,7 +83,8 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
     if template_name:
         theme["template"] = template_name
     path = pptx_path(name)
-    build_presentation(path, payload, theme or None, template=template_path)
+    build_presentation(path, payload, theme or None, template=template_path,
+                       template_images=template_images)
     path.with_suffix(".json").write_text(
         json.dumps({**payload, "theme": theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
@@ -92,7 +94,8 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
 
 def agent_save_presentation(name: str, title: str, slides: list[dict],
                             subtitle: str = "", accent_color: str = "",
-                            template: str = "") -> str:
+                            template: str = "",
+                            template_images: str = "auto") -> str:
     """Сборка по структуре от модели. Строка-ответ для модели (как в MCP-инструменте).
     Если template не передан — применяется выбранный пользователем (или свежий)."""
     data = {"title": title, "subtitle": subtitle,
@@ -114,11 +117,14 @@ def agent_save_presentation(name: str, title: str, slides: list[dict],
     if template_name:
         theme["template"] = template_name
     path = pptx_path(name)
-    build_presentation(path, data, theme or None, template=template_path)
+    build_presentation(path, data, theme or None, template=template_path,
+                       template_images=template_images)
     path.with_suffix(".json").write_text(
         json.dumps({**data, "theme": theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     note = f", по шаблону {template_name}" if template_name else ""
+    if template_name and Path(template_name).suffix.lower() == ".pdf":
+        note += " (без фото)" if template_images in ("remove", "all") else ""
     previews = render_pptx_previews(path)
     if previews:
         note += f", готовы превью ({previews} слайдов)"

@@ -72,6 +72,7 @@ class ChatRequest(BaseModel):
     backend: str | None = None      # ollama | xkiro | zai — переключатель из UI
     template: str | None = None     # шаблон, выбранный пользователем в UI
     output_format: str | None = None  # presentation | landing | None = решает модель
+    template_images: str | None = None  # remove = чекбокс «без фото из шаблона»
 
 
 @app.get("/")
@@ -119,6 +120,9 @@ def _system_prompt(state: dict) -> str:
     if chosen:
         lines.append(f"- ПОЛЬЗОВАТЕЛЬ ВЫБРАЛ ШАБЛОН: «{chosen}» — во ВСЕХ вызовах save_presentation "
                      f"передавай template=«{chosen}», даже если пользователь в тексте не повторяет.")
+    if state.get("chosen_template_images"):
+        lines.append("- ШАБЛОН БЕЗ ФОТО: пользователь выключил чужие картинки — во всех "
+                     "save_presentation по PDF-шаблону передавай template_images=\"remove\".")
     fmt = state.get("chosen_format")
     if fmt == "presentation":
         lines.append("- ФОРМАТ РЕЗУЛЬТАТА — ТОЛЬКО ПРЕЗЕНТАЦИЯ: сохраняй через save_presentation "
@@ -139,6 +143,8 @@ async def chat_endpoint(req: ChatRequest):
         state["chosen_template"] = req.template  # пустая строка = «авто»
     if req.output_format is not None:
         state["chosen_format"] = req.output_format  # пустая строка = решает модель
+    if req.template_images is not None and req.template_images:
+        state["chosen_template_images"] = req.template_images
 
     # системный промпт пересобираем каждый ход: актуальные файлы + фокус сессии
     system = _system_prompt(state)

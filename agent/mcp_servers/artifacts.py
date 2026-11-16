@@ -37,7 +37,8 @@ def html_to_pdf(name: str) -> str:
 
 @mcp.tool()
 def save_presentation(name: str, title: str, slides: list[dict], subtitle: str = "",
-                      accent_color: str = "", template: str = "") -> str:
+                      accent_color: str = "", template: str = "",
+                      template_images: str = "auto") -> str:
     """Собрать и сохранить презентацию .pptx (открывается и редактируется в PowerPoint).
     name — короткое имя файла; title/subtitle — заголовок презентации;
     slides — список слайдов, каждый: {"kind": "title|text|section|closing",
@@ -52,12 +53,16 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
     template — имя шаблона из list_templates (.pptx или .pdf). Если у пользователя
     загружены шаблоны — ОБЯЗАТЕЛЬНО передай в template самый свежий (последний в
     списке) или указанный пользователем, если он не попросил другой.
+    template_images — что делать с картинками внутри PDF-шаблона:
+    "auto" (по умолчанию) — фотографии-иллюстрации убираются автоматически;
+    "remove" — убрать ВСЕ картинки шаблона (чистый фон только из цветов дизайна);
+    если пользователь просит «без картинок/фото из шаблона» — передавай "remove".
     Для правки существующей презентации: сначала get_presentation с её именем,
     затем save_presentation с ТЕМ ЖЕ именем и исправленной структурой.
     Перед сохранением структура проверяется: при замечаниях файл НЕ создаётся —
     исправь их и вызови инструмент снова."""
     return decks.agent_save_presentation(name, title, slides, subtitle,
-                                         accent_color, template)
+                                         accent_color, template, template_images)
 
 
 @mcp.tool()
