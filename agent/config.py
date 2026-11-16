@@ -35,6 +35,14 @@ BACKENDS = {
         "api_key": os.environ.get("XKIRO_API_KEY", ""),
         "model": os.environ.get("XKIRO_MODEL", "mistralai/mistral-large-2512"),
     },
+    # Z.ai (Zhipu) — тот же провайдер, на котором работает ассистент разработчика:
+    # OpenAI-совместимый API, у базового URL нет /v1, поэтому /chat/completions
+    # дописывается в llm.py к base_url как есть
+    "zai": {
+        "base_url": os.environ.get("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
+        "api_key": os.environ.get("ZAI_API_KEY", ""),
+        "model": os.environ.get("ZAI_MODEL", "glm-5.3-flash"),
+    },
 }
 
 DEFAULT_BACKEND = "ollama"
