@@ -115,9 +115,9 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
         template_path = TEMPLATES_DIR / template_name
         if not template_path.exists():
             issues.append(f"шаблон «{template}» не найден — вызови list_templates")
-    elif template_name := _newest_template():
+    elif template_name := _preferred_template():
         # у пользователя есть шаблоны, но модель не передала template —
-        # применяем самый свежий автоматически (brand-стиль важнее «дефолтного» зелёного)
+        # применяем выбранный пользователем (или самый свежий) автоматически
         template_path = TEMPLATES_DIR / template_name
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "
@@ -140,6 +140,20 @@ def _newest_template() -> str:
     """Имя самого свежего .pptx-шаблона пользователя (или пустая строка)."""
     candidates = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
     return candidates[-1].name if candidates else ""
+
+
+def _preferred_template() -> str:
+    """Шаблон, выбранный пользователем в веб-интерфейсе (hint-файл .preferred),
+    иначе — самый свежий. Гарантирует: даже если модель забыла template,
+    применён именно тот шаблон, который выбрал человек."""
+    hint = TEMPLATES_DIR / ".preferred"
+    try:
+        name = hint.read_text(encoding="utf-8").strip()
+        if name and (TEMPLATES_DIR / name).exists():
+            return name
+    except OSError:
+        pass
+    return _newest_template()
 
 
 @mcp.tool()

@@ -259,7 +259,7 @@ def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,
                 if body is not None:
                     body.text_frame.word_wrap = True
                     if has_image:
-                        body.width = Inches(6.4)
+                        body.width = int(prs.slide_width * 0.52)
                     for i, bullet in enumerate(bullets):
                         para = body.text_frame.paragraphs[0] if i == 0 else body.text_frame.add_paragraph()
                         para.space_after = Pt(12)
@@ -383,9 +383,9 @@ def _build_on_skeleton(prs, data: dict) -> bool:
         else:
             base = take("content")
         if modes[id(base)] == "ph":
-            _retext_slide(base, sd)
+            _retext_slide(prs, base, sd)
         else:
-            _retext_freeform(base, sd)
+            _retext_freeform(prs, base, sd)
         ordered.append(base)
 
     # чужие слайды, не понадобившиеся ни под один наш, — удалить
@@ -396,7 +396,7 @@ def _build_on_skeleton(prs, data: dict) -> bool:
     return True
 
 
-def _retext_slide(slide, sd: dict) -> None:
+def _retext_slide(prs, slide, sd: dict) -> None:
     """Заменить текст в ПЛЕЙСХОЛДЕРАХ слайда шаблона (дизайн остаётся).
     Посторонний текст шаблона (не в плейсхолдерах) очищается."""
     kind = sd.get("kind", "content")
@@ -416,20 +416,24 @@ def _retext_slide(slide, sd: dict) -> None:
             frame.paragraphs[0].text = subtitle or ("Контакты" if kind == "closing" else "")
         elif ptype in (PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.BODY):
             body = ph
+    image_path = _slide_image(sd)
     if body is not None:
         frame = body.text_frame
         frame.clear()
         frame.word_wrap = True
+        if image_path:
+            body.width = int(prs.slide_width * 0.52)
         for i, bullet in enumerate(bullets):
             para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
             para.text = bullet
+    _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
     for shape in slide.shapes:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
             shape.text_frame.clear()
 
 
-def _retext_freeform(slide, sd: dict) -> None:
+def _retext_freeform(prs, slide, sd: dict) -> None:
     """То же для «дизайнерских» слайдов: текст живёт в обычных текстбоксах.
     Крупнейший текстбокс считаем заголовком, следующий — телом/подзаголовком.
     Форматирование ранов сохраняем."""
@@ -437,13 +441,18 @@ def _retext_freeform(slide, sd: dict) -> None:
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
     bullets = [str(b) for b in (sd.get("bullets") or [])] if kind == "content" else []
+    image_path = _slide_image(sd)
     texts = _text_shapes(slide)
     if not texts:
+        _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
         return
     _set_shape_lines(texts[0], [title])
     rest = texts[1:]
     if kind == "content" and rest:
-        _set_shape_lines(rest[0], bullets)
+        body = rest[0]
+        _set_shape_lines(body, bullets)
+        if image_path and body.width > int(prs.slide_width * 0.55):
+            body.width = int(prs.slide_width * 0.52)
         for sp in rest[1:]:
             _set_shape_lines(sp, [])
     else:
@@ -452,6 +461,32 @@ def _retext_freeform(slide, sd: dict) -> None:
             _set_shape_lines(rest[0], [note] if note else [])
         for sp in rest[1:]:
             _set_shape_lines(sp, [])
+    _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+
+
+def _slide_image(sd: dict) -> Path | None:
+    """Путь к картинке слайда из активов пользователя (или None)."""
+    name = sd.get("image")
+    if not name:
+        return None
+    path = ASSETS_DIR / Path(str(name)).name
+    return path if path.exists() else None
+
+
+def _add_template_image(slide, prs, image_path: Path | None,
+                        x_frac: float = 0.55, y_frac: float = 0.25,
+                        w_frac: float = 0.40) -> None:
+    """Картинка справа, геометрия — в долях от РЕАЛЬНОГО размера слайда
+    (шаблон может быть 4:3, а не 16:9 — фиксированные дюймы наедут на текст).
+    Для «дизайнерских» слайдов (freeform) передаются x/y/w ниже и правее,
+    чтобы не накрывать рамку заголовка и текст."""
+    if not image_path:
+        return
+    sw, sh = prs.slide_width, prs.slide_height
+    width = int(sw * w_frac)
+    x = int(sw * x_frac)
+    y = int(sh * y_frac)
+    slide.shapes.add_picture(str(image_path), x, y, width=width)
 
 
 def _set_shape_lines(shape, lines: list) -> None:

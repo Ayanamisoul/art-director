@@ -82,7 +82,8 @@ app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
-    backend: str | None = None  # ollama | xkiro — переключатель из UI
+    backend: str | None = None  # ollama | xkiro | zai — переключатель из UI
+    template: str | None = None  # шаблон, выбранный пользователем в UI
 
 
 @app.get("/")
@@ -100,6 +101,8 @@ async def chat_endpoint(req: ChatRequest):
         sessions[session_id] = state
     if req.backend in BACKENDS:
         state["backend"] = req.backend
+    if req.template is not None:
+        state["chosen_template"] = req.template  # пустая строка = «авто»
     # системный промпт пересобираем каждый ход: подмешиваем актуальные файлы
     # пользователя (шаблоны, картинки, готовые презентации) и фокус сессии
     system = _system_prompt(state)
@@ -182,6 +185,10 @@ def _system_prompt(state: dict) -> str:
     if state.get("presentation"):
         lines.append(f"- ФОКУС ЭТОЙ СЕССИИ: презентация «{state['presentation']}» — "
                      f"пользователь обсуждает и правит её. Правки сохраняй с этим же именем.")
+    chosen = state.get("chosen_template")
+    if chosen:
+        lines.append(f"- ПОЛЬЗОВАТЕЛЬ ВЫБРАЛ ШАБЛОН: «{chosen}» — во ВСЕХ вызовах save_presentation "
+                     f"передавай template=«{chosen}», даже если пользователь в тексте не повторяет.")
     return "\n".join(lines)
 
 
@@ -350,7 +357,26 @@ async def upload_template(file: UploadFile):
     if Path(name).suffix.lower() != ".pptx":
         raise HTTPException(400, f"«{name}» — не шаблон. Нужен файл .pptx (PowerPoint)")
     (TEMPLATES_DIR / name).write_bytes(await file.read())
+    # новый шаблон становится выбранным — юзер кидает файл, чтобы работать по нему
+    (TEMPLATES_DIR / ".preferred").write_text(name, encoding="utf-8")
     return {"ok": True, "name": name, "replaced": (TEMPLATES_DIR / name).exists()}
+
+
+class PreferredTemplate(BaseModel):
+    name: str = ""
+
+
+@app.post("/api/templates/preferred")
+async def set_preferred_template(body: PreferredTemplate):
+    """Выбор шаблона из выпадающего списка в чате (пустое имя = авто/самый свежий)."""
+    hint = TEMPLATES_DIR / ".preferred"
+    name = body.name.strip()
+    if name:
+        if not (TEMPLATES_DIR / Path(name).name).exists():
+            raise HTTPException(404, f"шаблон «{name}» не найден")
+        name = Path(name).name
+    hint.write_text(name, encoding="utf-8")
+    return {"ok": True, "preferred": name}
 
 
 @app.get("/api/assets")
