@@ -168,8 +168,6 @@ async function restoreSession(id) {
     const data = await r.json();
     sessionId = data.id;
     setPresentation(data.presentation);
-    const sel = document.getElementById('backend');
-    if (data.backend && sel.querySelector('option[value="' + data.backend + '"]')) sel.value = data.backend;
     for (const m of data.messages) {
       if (m.role === 'system' || m.role === 'tool') continue;
       if (m.role === 'user') addMsg('user', m.content);
@@ -213,7 +211,7 @@ form.addEventListener('submit', async (e) => {
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({message: text, session_id: sessionId, backend: document.getElementById('backend').value,
+      body: JSON.stringify({message: text, session_id: sessionId,
         template: document.getElementById('template').value,
         template_images: document.getElementById('no-template-photos').checked ? 'remove' : '',
         output_format: document.getElementById('outformat').value}),

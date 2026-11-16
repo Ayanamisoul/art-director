@@ -1,7 +1,7 @@
-"""Конфигурация агента: читает .env и выбирает бэкенд (ollama или xkiro).
+"""Конфигурация агента: читает .env и выбирает бэкенд LLM.
 
-Оба бэкенда говорят по OpenAI-совместимому протоколу (POST /v1/chat/completions),
-поэтому переключение между ними = смена base_url + api_key + model.
+Бэкенд один — Z.ai (GLM), тот же OpenAI-совместимый протокол, поэтому если
+понадобится другой провайдер — достаточно дополнить словарь BACKENDS.
 """
 import os
 from pathlib import Path
@@ -24,20 +24,9 @@ def load_env(path: Path = ENV_PATH) -> None:
 
 load_env()
 
+# Z.ai (Zhipu) — OpenAI-совместимый API, у базового URL нет /v1, поэтому
+# /chat/completions дописывается в llm.py к base_url как есть
 BACKENDS = {
-    "ollama": {
-        "base_url": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
-        "api_key": "ollama",  # Ollama ключ не проверяет, но заголовок нужен по протоколу
-        "model": os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct"),
-    },
-    "xkiro": {
-        "base_url": os.environ.get("XKIRO_BASE_URL", "https://xkiro.com/v1"),
-        "api_key": os.environ.get("XKIRO_API_KEY", ""),
-        "model": os.environ.get("XKIRO_MODEL", "mistralai/mistral-large-2512"),
-    },
-    # Z.ai (Zhipu) — тот же провайдер, на котором работает ассистент разработчика:
-    # OpenAI-совместимый API, у базового URL нет /v1, поэтому /chat/completions
-    # дописывается в llm.py к base_url как есть
     "zai": {
         "base_url": os.environ.get("ZAI_BASE_URL", "https://api.z.ai/api/paas/v4"),
         "api_key": os.environ.get("ZAI_API_KEY", ""),
@@ -45,4 +34,4 @@ BACKENDS = {
     },
 }
 
-DEFAULT_BACKEND = "ollama"
+DEFAULT_BACKEND = "zai"
