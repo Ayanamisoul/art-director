@@ -97,6 +97,7 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     backend: str | None = None  # ollama | xkiro | zai — переключатель из UI
     template: str | None = None  # шаблон, выбранный пользователем в UI
+    output_format: str | None = None  # presentation | landing | None = решает модель
 
 
 @app.get("/")
@@ -116,6 +117,8 @@ async def chat_endpoint(req: ChatRequest):
         state["backend"] = req.backend
     if req.template is not None:
         state["chosen_template"] = req.template  # пустая строка = «авто»
+    if req.output_format is not None:
+        state["chosen_format"] = req.output_format  # пустая строка = решает модель
     # системный промпт пересобираем каждый ход: подмешиваем актуальные файлы
     # пользователя (шаблоны, картинки, готовые презентации) и фокус сессии
     system = _system_prompt(state)
@@ -202,6 +205,14 @@ def _system_prompt(state: dict) -> str:
     if chosen:
         lines.append(f"- ПОЛЬЗОВАТЕЛЬ ВЫБРАЛ ШАБЛОН: «{chosen}» — во ВСЕХ вызовах save_presentation "
                      f"передавай template=«{chosen}», даже если пользователь в тексте не повторяет.")
+    fmt = state.get("chosen_format")
+    if fmt == "presentation":
+        lines.append("- ФОРМАТ РЕЗУЛЬТАТА — ТОЛЬКО ПРЕЗЕНТАЦИЯ: сохраняй через save_presentation "
+                     "(.pptx со слайдами). save_html и лендинги НЕ ИСПОЛЬЗОВАТЬ, даже если "
+                     "запрос звучит как справочник — делай слайды.")
+    elif fmt == "landing":
+        lines.append("- ФОРМАТ РЕЗУЛЬТАТА — ТОЛЬКО ЛЕНДИНГ: сохраняй через save_html "
+                     "(одностраничный HTML). save_presentation НЕ ИСПОЛЬЗОВАТЬ.")
     return "\n".join(lines)
 
 

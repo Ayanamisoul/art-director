@@ -27,7 +27,7 @@
   .composer input { flex: 1; padding: 12px 16px; border-radius: 10px; border: 1px solid #3a322b; background: var(--panel); color: var(--text); font-size: 15px; }
   .composer button { padding: 12px 24px; border: none; border-radius: 10px; background: var(--accent); color: #14110f; font-weight: bold; cursor: pointer; }
   .composer button:disabled { opacity: .5; cursor: wait; }
-  .tplrow { display: flex; align-items: center; gap: 8px; padding: 10px 24px 0; font-size: 12px; color: #9a8f83; }
+  .tplrow { display: flex; align-items: center; gap: 8px; padding: 10px 24px 0; font-size: 12px; color: #9a8f83; flex-wrap: wrap; }
   .tplrow select { background: var(--panel); color: var(--text); border: 1px solid #3a322b; border-radius: 8px; padding: 5px 10px; font-size: 12px; max-width: 420px; }
   aside { border-left: 1px solid #2c2620; padding: 16px; overflow-y: auto; }
   aside h2 { font-size: 14px; color: var(--accent); margin-top: 0; }
@@ -90,7 +90,11 @@
     </header>
     <div id="focusbar"></div>
     <div id="messages"></div>
-    <div class="tplrow"><span>Шаблон презентаций:</span><select id="template"><option value="">Авто — самый свежий загруженный</option></select></div>
+    <div class="tplrow"><span>Формат:</span><select id="outformat">
+        <option value="">Авто — решает модель</option>
+        <option value="presentation">Презентация (.pptx)</option>
+        <option value="landing">Лендинг (сайт)</option>
+      </select><span>Шаблон:</span><select id="template"><option value="">Авто — самый свежий загруженный</option></select></div>
     <form class="composer" id="form">
       <input id="input" placeholder="Например: сделай презентацию по железу для новичков по моему шаблону" autocomplete="off">
       <button id="send" type="submit">Отправить</button>
@@ -309,7 +313,8 @@ form.addEventListener('submit', async (e) => {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({message: text, session_id: sessionId, backend: document.getElementById('backend').value,
-        template: document.getElementById('template').value}),
+        template: document.getElementById('template').value,
+        output_format: document.getElementById('outformat').value}),
     });
     const data = await r.json();
     sessionId = data.session_id;
