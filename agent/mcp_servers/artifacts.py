@@ -98,29 +98,61 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
     Поле с пунктами называется СТРОГО "bullets" (список строк).
     Правила: первый слайд kind=title, последний kind=closing; на текстовом слайде
     до 6 пунктов, каждый до 140 символов. accent_color — hex бренда, напр. "2E5E4E".
-    template — имя .pptx-шаблона из list_templates (необязательно): тема/цвета возьмутся из него.
+    template — имя .pptx-шаблона из list_templates: тема/цвета возьмутся из него.
+    Если у пользователя загружены шаблоны — ОБЯЗАТЕЛЬНО передай в template самый
+    свежий из них (последний в списке list_templates), если пользователь не попросил другой.
+    Для правки существующей презентации: сначала get_presentation с её именем,
+    затем save_presentation с ТЕМ ЖЕ именем и исправленной структурой.
     Перед сохранением структура проверяется: при замечаниях файл НЕ создаётся —
     исправь их и вызови инструмент снова."""
     data = {"title": title, "subtitle": subtitle, "slides": slides}
     data["slides"] = [normalize_slide(s) for s in slides]
     issues = validate_presentation(data)
+    template_name = ""
     template_path = None
     if template:
-        template_path = TEMPLATES_DIR / Path(template).name
+        template_name = Path(template).name
+        template_path = TEMPLATES_DIR / template_name
         if not template_path.exists():
             issues.append(f"шаблон «{template}» не найден — вызови list_templates")
+    elif template_name := _newest_template():
+        # у пользователя есть шаблоны, но модель не передала template —
+        # применяем самый свежий автоматически (brand-стиль важнее «дефолтного» зелёного)
+        template_path = TEMPLATES_DIR / template_name
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "
                 + "\n- ".join(issues))
-    theme = {"accent": accent_color.lstrip("#")} if accent_color else None
+    theme = {"accent": accent_color.lstrip("#")} if accent_color else {}
+    if template_name:
+        theme["template"] = template_name
     path = DATA_DIR / f"{_safe_name(name)}.pptx"
-    build_presentation(path, data, theme, template=template_path)
+    build_presentation(path, data, theme or None, template=template_path)
     # sidecar JSON: структура презентации для веб-редактора и правок через чат
     import json as _json
     path.with_suffix(".json").write_text(
-        _json.dumps({**data, "theme": theme or {}}, ensure_ascii=False, indent=2),
+        _json.dumps({**data, "theme": theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
-    return f"Презентация сохранена и прошла проверку: {path} ({len(slides)} слайдов)"
+    note = f", по шаблону {template_name}" if template_name else ""
+    return f"Презентация сохранена и прошла проверку: {path} ({len(slides)} слайдов{note})"
+
+
+def _newest_template() -> str:
+    """Имя самого свежего .pptx-шаблона пользователя (или пустая строка)."""
+    candidates = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
+    return candidates[-1].name if candidates else ""
+
+
+@mcp.tool()
+def get_presentation(name: str) -> str:
+    """Прочитать текущую структуру презентации (JSON: title, subtitle, slides,
+    theme). Вызови ПЕРЕД правками существующей презентации, чтобы не потерять
+    слайды: измени нужные слайды в полученной структуре и сохрани всё целиком
+    через save_presentation с тем же именем."""
+    sidecar = DATA_DIR / f"{_safe_name(name)}.json"
+    if not sidecar.exists():
+        return (f"Презентация «{name}» не найдена. Вызови list_artifacts, чтобы увидеть, "
+                f"что уже сохранено.")
+    return sidecar.read_text(encoding="utf-8")
 
 
 @mcp.tool()
@@ -134,11 +166,15 @@ def list_images() -> str:
 
 @mcp.tool()
 def list_templates() -> str:
-    """Список .pptx-шаблонов, загруженных пользователем.
-    Имя шаблона можно передать в save_presentation параметром template."""
-    files = sorted(p.name for p in TEMPLATES_DIR.iterdir() if p.is_file())
-    return "Шаблоны пользователя:\n" + "\n".join(files) if files else \
-        "Пользователь пока не загрузил шаблонов."
+    """Список .pptx-шаблонов, загруженных пользователем (свежий — последним).
+    Имя шаблона нужно передать в save_presentation параметром template.
+    Если шаблоны есть — создавай презентации по самому свежему."""
+    files = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
+    names = [p.name for p in files]
+    if not names:
+        return "Пользователь пока не загрузил шаблонов."
+    return ("Шаблоны пользователя (самый свежий — последний, используй его "
+            "в save_presentation параметром template):\n" + "\n".join(names))
 
 
 @mcp.tool()

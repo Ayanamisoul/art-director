@@ -3,11 +3,13 @@
   cd agent && py -m uvicorn web:app --port 8000
   дальше http://localhost:8000
 
-Сессии чатов — в памяти процесса (учебный стенд; local-first файлы — в data/).
+Сессии чатов хранятся на диске пользователя (data/sessions/*.json, local-first):
+можно вернуться к чату по конкретной презентации и продолжить правки.
 """
 import sys
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -37,12 +39,31 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data" / "artifacts"
 ASSETS_DIR = ROOT / "data" / "assets"
 TEMPLATES_DIR = ROOT / "data" / "templates"
-for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR):
+SESSIONS_DIR = ROOT / "data" / "sessions"
+for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR, SESSIONS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 WEB_DIR = Path(__file__).parent / "web"
 
 toolbox = MCPToolbox(ARTIFACTS_SERVER)
-sessions: dict[str, dict] = {}  # session_id -> {"backend": str, "skill": str, "messages": list}
+sessions: dict[str, dict] = {}  # session_id -> {id, backend, skill, messages, presentation, ...}
+
+
+def _load_sessions() -> None:
+    for f in SESSIONS_DIR.glob("*.json"):
+        try:
+            state = jsonlib.loads(f.read_text(encoding="utf-8"))
+            sessions[state["id"]] = state
+        except Exception as exc:  # битый файл не должен ронять сервер
+            print(f"сессия {f.name} пропущена: {exc}")
+
+
+def _save_session(state: dict) -> None:
+    state["updated"] = datetime.now().isoformat(timespec="seconds")
+    (SESSIONS_DIR / f"{state['id']}.json").write_text(
+        jsonlib.dumps(state, ensure_ascii=False), encoding="utf-8")
+
+
+_load_sessions()
 
 
 @asynccontextmanager
@@ -72,13 +93,20 @@ async def index():
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
     session_id = req.session_id or uuid.uuid4().hex
-    state = sessions.setdefault(session_id, {
-        "backend": DEFAULT_BACKEND, "skill": "chat", "messages": [],
-    })
+    state = sessions.get(session_id)
+    if state is None:
+        state = {"id": session_id, "backend": DEFAULT_BACKEND, "skill": "chat",
+                 "messages": [], "presentation": None}
+        sessions[session_id] = state
     if req.backend in BACKENDS:
         state["backend"] = req.backend
-    if not state["messages"]:
-        state["messages"].append({"role": "system", "content": SKILLS[state["skill"]]})
+    # системный промпт пересобираем каждый ход: подмешиваем актуальные файлы
+    # пользователя (шаблоны, картинки, готовые презентации) и фокус сессии
+    system = _system_prompt(state)
+    if state["messages"] and state["messages"][0].get("role") == "system":
+        state["messages"][0]["content"] = system
+    else:
+        state["messages"].insert(0, {"role": "system", "content": system})
     state["messages"].append({"role": "user", "content": req.message})
 
     tool_log: list[str] = []
@@ -87,6 +115,7 @@ async def chat_endpoint(req: ChatRequest):
         answer = await agent_reply(backend, state["messages"], toolbox, log=tool_log)
     except Exception as exc:
         state["messages"].pop()
+        _save_session(state)
         return {"session_id": session_id, "error": str(exc), "tools": tool_log}
 
     # --- семантическая валидация: судья сверяет результат с запросом ---
@@ -112,15 +141,48 @@ async def chat_endpoint(req: ChatRequest):
         if message.get("role") != "tool":
             continue
         content = message.get("content") or ""
-        m = re.search(r"Презентация сохранена и прошла проверку: .+?([^\\/]+)\.pptx", content)
+        m = re.search(r"Презентация сохранена и прошла проверку: .+?([^\\/()\s]+)\.pptx", content)
         if m:
             saved["presentation"] = m.group(1)
-        m = re.search(r"Сохранено и прошло проверку: .+?([^\\/]+)\.html", content)
+        m = re.search(r"Сохранено и прошло проверку: .+?([^\\/()\s]+)\.html", content)
         if m:
             saved["html"] = m.group(1)
+    # привязываем сессию к презентации, чтобы можно было вернуться к чату по ней
+    if saved["presentation"] and not state.get("presentation"):
+        state["presentation"] = saved["presentation"]
+    _save_session(state)
 
     return {"session_id": session_id, "answer": answer, "tools": tool_log,
-            "backend": state["backend"], "validation": validation, "saved": saved}
+            "backend": state["backend"], "validation": validation, "saved": saved,
+            "presentation": state.get("presentation")}
+
+
+def _system_prompt(state: dict) -> str:
+    """Скилл + текущая обстановка: что пользователь загрузил и что уже создано.
+    Обновляется каждый ход — модель всегда видит актуальные файлы."""
+    templates = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
+    images = sorted(p.name for p in ASSETS_DIR.iterdir() if p.is_file())
+    decks = sorted(p.stem for p in DATA_DIR.glob("*.pptx"))
+    lines = [SKILLS[state["skill"]] if state.get("skill") in SKILLS else SKILLS["chat"],
+             "", "ФАЙЛЫ ПОЛЬЗОВАТЕЛЯ НА ЭТОЙ МАШИНЕ (актуально на сейчас):"]
+    if templates:
+        lines.append("- Шаблоны .pptx (свежий — последний): "
+                     + ", ".join(p.name for p in templates)
+                     + "\n  СОЗДАВАЙ ПРЕЗЕНТАЦИИ ПО САМОМУ СВЕЖЕМУ ШАБЛОНУ (template=...), "
+                       "если пользователь не попросил другой стиль или без шаблона.")
+    else:
+        lines.append("- Шаблонов нет. Если пользователь просит «по моему шаблону» — "
+                     "попроси загрузить .pptx в панели файлов.")
+    if images:
+        lines.append("- Изображения: " + ", ".join(images))
+    if decks:
+        lines.append("- Сохранённые презентации: " + ", ".join(decks)
+                     + "\n  Для правок: get_presentation(имя) -> изменить нужные слайды -> "
+                       "save_presentation с тем же именем.")
+    if state.get("presentation"):
+        lines.append(f"- ФОКУС ЭТОЙ СЕССИИ: презентация «{state['presentation']}» — "
+                     f"пользователь обсуждает и правит её. Правки сохраняй с этим же именем.")
+    return "\n".join(lines)
 
 
 def _last_artifact_summary(messages: list[dict]) -> str | None:
@@ -160,6 +222,48 @@ async def editor_page(name: str):
     return FileResponse(WEB_DIR / "editor.html")
 
 
+# --- сессии чатов: список, история, привязка к презентации ---
+
+@app.get("/api/sessions")
+async def list_sessions():
+    items = []
+    for s in sessions.values():
+        first_user = next((m["content"] for m in s["messages"]
+                           if m.get("role") == "user" and isinstance(m.get("content"), str)), "")
+        items.append({"id": s["id"], "presentation": s.get("presentation"),
+                      "updated": s.get("updated", ""), "turns": sum(
+                          1 for m in s["messages"] if m.get("role") == "user"),
+                      "preview": first_user[:120]})
+    items.sort(key=lambda x: x["updated"], reverse=True)
+    return {"sessions": items}
+
+
+@app.get("/api/session/{session_id}")
+async def get_session(session_id: str):
+    state = sessions.get(session_id)
+    if state is None:
+        raise HTTPException(404, "сессия не найдена")
+    return {"id": state["id"], "presentation": state.get("presentation"),
+            "backend": state.get("backend"), "messages": state["messages"]}
+
+
+class ForPresentation(BaseModel):
+    name: str
+
+
+@app.post("/api/session/for-presentation")
+async def session_for_presentation(body: ForPresentation):
+    """Найти свежий чат по презентации или создать новый — для кнопки «чат» в панели."""
+    candidates = [s for s in sessions.values() if s.get("presentation") == body.name]
+    if candidates:
+        return {"id": max(candidates, key=lambda s: s.get("updated", ""))["id"], "created": False}
+    sid = uuid.uuid4().hex
+    sessions[sid] = {"id": sid, "backend": DEFAULT_BACKEND, "skill": "chat",
+                     "messages": [], "presentation": body.name}
+    _save_session(sessions[sid])
+    return {"id": sid, "created": True}
+
+
 @app.get("/api/presentation/{name}")
 async def get_presentation(name: str):
     sidecar = DATA_DIR / f"{name}.json"
@@ -173,19 +277,33 @@ class PresentationSave(BaseModel):
     subtitle: str = ""
     slides: list[dict]
     theme: dict = {}
+    template: str = ""
 
 
 @app.post("/api/presentation/{name}")
 async def save_presentation_endpoint(name: str, data: PresentationSave):
-    if not all(c in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-\u0400-\u04FF" for c in name):
+    if not all(c in "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-а-яА-ЯёЁ" for c in name):
         raise HTTPException(400, "недопустимое имя")
     slides = [normalize_slide(s) for s in data.slides]
     payload = {"title": data.title, "subtitle": data.subtitle, "slides": slides}
     issues = validate_presentation(payload)
     if issues:
         return {"ok": False, "issues": issues}
+    # шаблон: из запроса, иначе из прошлой сборки — чтобы правки в редакторе
+    # не сбрасывали фирменный стиль
+    template_name = data.template or (data.theme or {}).get("template", "")
+    if not template_name:
+        old = DATA_DIR / f"{name}.json"
+        if old.exists():
+            try:
+                template_name = (jsonlib.loads(old.read_text(encoding="utf-8")).get("theme") or {}).get("template", "")
+            except Exception:
+                pass
+    template_path = TEMPLATES_DIR / template_name if template_name and (TEMPLATES_DIR / template_name).exists() else None
+    if template_name:
+        data.theme["template"] = template_name
     path = DATA_DIR / f"{name}.pptx"
-    build_presentation(path, payload, data.theme or None)
+    build_presentation(path, payload, data.theme or None, template=template_path)
     path.with_suffix(".json").write_text(
         jsonlib.dumps({**payload, "theme": data.theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
