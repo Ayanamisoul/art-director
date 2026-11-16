@@ -38,6 +38,13 @@
   a.chat-btn { display: inline-block; margin: 0 0 10px 6px; padding: 6px 10px; border: 1px solid #3a322b; border-radius: 8px; color: var(--text); text-decoration: none; font-size: 12px; cursor: pointer; background: none; }
   a.chat-btn:hover { border-color: var(--accent); color: var(--accent); }
   button.new-chat { display: block; width: 100%; margin: 0 0 12px; padding: 8px 10px; background: var(--accent); color: #14110f; border: none; border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; }
+  aside h2 { margin: 18px 0 8px; font-size: 14px; color: var(--accent); }
+  .chat-item { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+  .chat-item a.title { flex: 1; color: var(--text); text-decoration: none; font-size: 12px; word-break: break-word; padding: 5px 6px; border-radius: 6px; }
+  .chat-item a.title:hover { background: var(--panel); }
+  .chat-item a.open { color: var(--accent); text-decoration: none; font-size: 14px; padding: 2px 4px; }
+  .chat-item button.del { background: none; border: none; color: #9a8f83; cursor: pointer; font-size: 13px; padding: 2px 4px; }
+  .chat-item button.del:hover { color: #e88; }
   a.edit-btn:hover { background: var(--accent); color: #14110f; }
   .hint { font-size: 12px; color: #9a8f83; margin-bottom: 12px; }
   /* предпросмотр презентации в чате — та же геометрия, что у PPTX (cqw от ширины слайда) */
@@ -105,10 +112,12 @@
     <button class="new-chat" onclick="location.href='/'">🆕 Новый чат</button>
     <div class="hint">Всё сохраняется локально на этом компьютере.</div>
     <button class="upload-btn" onclick="document.getElementById('up-img').click()">📷 Загрузить изображение</button>
-    <button class="upload-btn" onclick="document.getElementById('up-tpl').click()">📐 Загрузить шаблон .pptx</button>
+    <button class="upload-btn" onclick="document.getElementById('up-tpl').click()">📐 Загрузить шаблон (.pptx или .pdf)</button>
     <input type="file" id="up-img" accept="image/*" multiple hidden>
-    <input type="file" id="up-tpl" accept=".pptx" hidden>
-    <div id="files"></div>
+    <input type="file" id="up-tpl" accept=".pptx,.pdf" hidden>
+    <h2>Чаты</h2>
+    <div id="chats"></div>
+    <h2>Файлы</h2>
   </aside>
 </div>
 <script>
@@ -364,7 +373,7 @@ async function uploadInput(e) {
 
 function kindOf(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (ext === 'pptx') return { url: '/api/templates', label: 'шаблон' };
+  if (ext === 'pptx' || ext === 'pdf') return { url: '/api/templates', label: 'шаблон' };
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) return { url: '/api/assets', label: 'изображение' };
   return null;
 }
@@ -392,6 +401,7 @@ async function uploadOne(file) {
     pill.classList.add('err');
   }
   refreshFiles();
+  refreshTemplates();
 }
 
 function note(text, isError) {
@@ -445,6 +455,37 @@ document.addEventListener('paste', async e => {
     await uploadOne(new File([blob], `вставка-${stamp}${index ? '-' + index : ''}.${ext}`, { type: blob.type }));
   }
 });
+
+// ---------- список чатов: открыть / удалить ----------
+async function refreshChats() {
+  const r = await fetch('/api/sessions');
+  const data = await r.json();
+  const box = document.getElementById('chats');
+  box.innerHTML = '';
+  data.sessions.forEach(s => {
+    const row = document.createElement('div');
+    row.className = 'chat-item';
+    const a = document.createElement('a');
+    a.className = 'title';
+    a.href = '/?session=' + encodeURIComponent(s.id);
+    a.textContent = s.presentation || (s.preview || 'чат без сообщений');
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.title = 'Удалить чат';
+    del.textContent = '🗑';
+    del.onclick = async () => {
+      if (!confirm('Удалить этот чат? История пропадёт (файлы презентаций останутся).')) return;
+      await fetch('/api/session/' + encodeURIComponent(s.id), { method: 'DELETE' });
+      if (sessionId === s.id) location.href = '/';
+      else refreshChats();
+    };
+    row.appendChild(a);
+    row.appendChild(del);
+    box.appendChild(row);
+  });
+  if (!data.sessions.length) box.innerHTML = '<div class="hint">Пока пусто — чаты появятся после первого сообщения.</div>';
+}
+refreshChats();
 </script>
 </body>
 </html>

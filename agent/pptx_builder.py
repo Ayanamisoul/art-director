@@ -155,6 +155,12 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
         if sd.get("kind", sd.get("type", "")) in ("title", "cover", "intro") \
                 and not sd.get("subtitle") and data.get("subtitle"):
             sd["subtitle"] = data["subtitle"]
+    if template and template.exists() and template.suffix.lower() == ".pdf":
+        # PDF-шаблон: страницы становятся фонами слайдов, текст — на карточках
+        prs = Presentation()
+        _build_on_pdf(prs, data, t, template)
+        prs.save(path)
+        return
     if template and template.exists():
         prs = Presentation(str(template))
         if not (theme or {}).get("accent"):
@@ -595,3 +601,157 @@ def _fill_placeholder(slide, types, text, bold=False, size=None):
                         run.font.size = Pt(size)
             return ph
     return None
+
+
+# ---------- сборка по PDF-шаблону ----------
+
+def _rasterize_pdf(template: Path) -> list[Path]:
+    """Страницы PDF -> PNG-картинки (кэш в data/templates/pdf_cache/<stem>/)."""
+    import fitz
+    cache = template.parent / "pdf_cache" / template.stem
+    pdf_mtime = template.stat().st_mtime
+    marker = cache / "source.mtime"
+    pages = sorted(cache.glob("p*.png"))
+    if pages and marker.exists():
+        try:
+            if abs(float(marker.read_text()) - pdf_mtime) < 1:
+                return pages
+        except (ValueError, OSError):
+            pass
+    doc = fitz.open(str(template))
+    cache.mkdir(parents=True, exist_ok=True)
+    for old_png in cache.glob("p*.png"):
+        old_png.unlink()
+    zoom = 1600 / max(doc[0].rect.width, 1)
+    for i, page in enumerate(doc):
+        # вырезаем ЧУЖОЙ текст страницы (наш будет поверх), заливая его цветом фона:
+        # цвет берём из углов страницы, иначе — белый
+        corner = _corner_color(page)
+        page_area = page.rect.width * page.rect.height
+        # чужие картинки (не фоновые: меньше 60% площади страницы) — тоже убрать
+        for img in page.get_images(full=True):
+            for rect in page.get_image_rects(img[0]):
+                if (rect.width * rect.height) / page_area < 0.6:
+                    page.add_redact_annot(fitz.Rect(rect) + (-2, -2, 2, 2), fill=corner)
+        for block in page.get_text("blocks"):
+            rect = fitz.Rect(block[:4]) + (-2, -2, 2, 2)
+            page.add_redact_annot(rect, fill=corner)
+        if page.get_text("blocks") or page.get_images():
+            try:  # заодно снести векторные плашки, полностью покрытые вырезкой
+                page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE,
+                                      graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
+            except TypeError:
+                page.apply_redactions()
+        page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).save(
+            str(cache / f"p{i + 1}.png"))
+    marker.write_text(str(pdf_mtime))
+    return sorted(cache.glob("p*.png"))
+
+
+def _corner_color(page) -> tuple:
+    """Цвет фона страницы PDF по её углам (для заливки вырезанного текста)."""
+    try:
+        r = page.rect
+        samples = []
+        for x, y in ((3, 3), (r.width - 3, 3), (3, r.height - 3), (r.width - 3, r.height - 3)):
+            pix = page.get_pixmap(clip=fitz.Rect(x - 1, y - 1, x + 1, y + 1))
+            samples.append(pix.pixel(0, 0))
+        avg = tuple(sum(c[i] for c in samples) // len(samples) for i in range(3))
+        return tuple(c / 255 for c in avg)
+    except Exception:
+        return (1, 1, 1)
+
+def _card(slide, prs, x_frac, y_frac, w_frac, h_frac, alpha_pct=88):
+    """Полупрозрачная белая карточка — читаемый фон для текста поверх дизайна PDF."""
+    from pptx.enum.shapes import MSO_SHAPE
+    sw, sh = prs.slide_width, prs.slide_height
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        int(sw * x_frac), int(sh * y_frac),
+        int(sw * w_frac), int(sh * h_frac))
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    srgb = box.fill.fore_color._xFill.find(qn("a:srgbClr"))
+    alpha = srgb.makeelement(qn("a:alpha"), {"val": str(int(alpha_pct * 1000))})
+    srgb.append(alpha)
+    box.line.fill.background()
+    box.shadow.inherit = False
+    return box
+
+
+def _pdf_text(slide, prs, text, x_frac, y_frac, w_frac, size, color,
+              bold=False, align=PP_ALIGN.LEFT, h_frac=0.1):
+    sw, sh = prs.slide_width, prs.slide_height
+    box = slide.shapes.add_textbox(int(sw * x_frac), int(sh * y_frac),
+                                   int(sw * w_frac), int(sh * h_frac))
+    frame = box.text_frame
+    frame.word_wrap = True
+    para = frame.paragraphs[0]
+    para.alignment = align
+    run = para.add_run()
+    run.text = text
+    run.font.size = Pt(size)
+    run.font.bold = bold
+    run.font.color.rgb = _rgb(color)
+    return box
+
+
+def _build_on_pdf(prs, data: dict, t: dict, template: Path) -> None:
+    """Слайды поверх страниц PDF: фон — картинка страницы, текст — на карточке.
+
+    Титул берёт страницу 1, контентные слайды — страницы 2..N (циклически),
+    финал — последнюю страницу. Пропорции слайда = пропорции страницы PDF.
+    """
+    pages = _rasterize_pdf(template)
+    if not pages:
+        raise RuntimeError(f"не удалось растрировать PDF-шаблон {template.name}")
+    import fitz
+    first = fitz.open(str(template))[0]
+    aspect = first.rect.height / max(first.rect.width, 1)
+    prs.slide_width = SLIDE_W
+    prs.slide_height = Emu(int(SLIDE_W * aspect))
+    sw, sh = prs.slide_width, prs.slide_height
+    title_color = t.get("accent", DEFAULT_THEME["accent"])
+    content_pages = pages[1:] or pages
+    content_idx = 0
+
+    for sd in data["slides"]:
+        kind = sd.get("kind", "content")
+        title = str(sd.get("title") or "")
+        subtitle = str(sd.get("subtitle") or ("Контакты" if kind == "closing" else ""))
+        bullets = [str(b) for b in (sd.get("bullets") or [])] if kind == "content" else []
+        if kind in ("title", "closing"):
+            bg = pages[0]
+        else:
+            bg = content_pages[min(content_idx, len(content_pages) - 1)]
+            content_idx += 1
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        slide.shapes.add_picture(str(bg), 0, 0, width=sw, height=sh)
+
+        if kind in ("title", "closing"):
+            _card(slide, prs, 0.14, 0.38, 0.72, 0.24, alpha_pct=90)
+            _pdf_text(slide, prs, title, 0.18, 0.43, 0.64, 32, title_color,
+                      bold=True, align=PP_ALIGN.CENTER, h_frac=0.09)
+            if subtitle:
+                _pdf_text(slide, prs, subtitle, 0.18, 0.53, 0.64, 14, "2B2B2B",
+                          align=PP_ALIGN.CENTER, h_frac=0.06)
+        elif kind == "section":
+            _card(slide, prs, 0.14, 0.40, 0.72, 0.18, alpha_pct=90)
+            _pdf_text(slide, prs, title, 0.18, 0.45, 0.64, 28, title_color,
+                      bold=True, align=PP_ALIGN.CENTER, h_frac=0.08)
+        else:
+            _card(slide, prs, 0.06, 0.20, 0.88, 0.72, alpha_pct=90)
+            _pdf_text(slide, prs, title, 0.10, 0.24, 0.80, 26, title_color,
+                      bold=True, h_frac=0.08)
+            body = slide.shapes.add_textbox(int(sw * 0.10), int(sh * 0.36),
+                                            int(sw * 0.80), int(sh * 0.52))
+            frame = body.text_frame
+            frame.word_wrap = True
+            size = 16 if len(bullets) <= 5 else 13
+            for i, bullet in enumerate(bullets):
+                para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
+                para.space_after = Pt(10)
+                run = para.add_run()
+                run.text = "•  " + bullet
+                run.font.size = Pt(size)
+                run.font.color.rgb = _rgb("2B2B2B")

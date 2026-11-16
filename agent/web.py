@@ -278,6 +278,17 @@ async def get_session(session_id: str):
             "backend": state.get("backend"), "messages": state["messages"]}
 
 
+@app.delete("/api/session/{session_id}")
+async def delete_session(session_id: str):
+    state = sessions.pop(session_id, None)
+    if state is None:
+        raise HTTPException(404, "сессия не найдена")
+    f = SESSIONS_DIR / f"{session_id}.json"
+    if f.exists():
+        f.unlink()
+    return {"ok": True}
+
+
 class ForPresentation(BaseModel):
     name: str
 
@@ -352,6 +363,7 @@ async def list_files():
 # --- загрузки пользователя: изображения и шаблоны (local-first) ---
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"}
+TEMPLATE_EXTS = {".pptx", ".pdf"}
 
 
 def _safe_filename(raw: str) -> str:
@@ -379,8 +391,8 @@ async def upload_asset(file: UploadFile):
 @app.post("/api/templates")
 async def upload_template(file: UploadFile):
     name = _safe_filename(file.filename or "template.pptx")
-    if Path(name).suffix.lower() != ".pptx":
-        raise HTTPException(400, f"«{name}» — не шаблон. Нужен файл .pptx (PowerPoint)")
+    if Path(name).suffix.lower() not in TEMPLATE_EXTS:
+        raise HTTPException(400, f"«{name}» — не шаблон. Поддерживаются .pptx и .pdf")
     (TEMPLATES_DIR / name).write_bytes(await file.read())
     # новый шаблон становится выбранным — юзер кидает файл, чтобы работать по нему
     (TEMPLATES_DIR / ".preferred").write_text(name, encoding="utf-8")
@@ -411,4 +423,6 @@ async def list_assets():
 
 @app.get("/api/templates")
 async def list_templates():
-    return {"files": sorted(p.name for p in TEMPLATES_DIR.iterdir() if p.is_file())}
+    files = sorted(p.name for p in TEMPLATES_DIR.iterdir()
+                   if p.is_file() and p.suffix.lower() in TEMPLATE_EXTS)
+    return {"files": files}

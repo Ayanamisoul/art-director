@@ -99,7 +99,7 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
     Поле с пунктами называется СТРОГО "bullets" (список строк).
     Правила: первый слайд kind=title, последний kind=closing; на текстовом слайде
     до 6 пунктов, каждый до 140 символов. accent_color — hex бренда, напр. "2E5E4E".
-    template — имя .pptx-шаблона из list_templates: тема/цвета возьмутся из него.
+    template — имя шаблона из list_templates (.pptx или .pdf): дизайн возьмётся из него.
     Если у пользователя загружены шаблоны — ОБЯЗАТЕЛЬНО передай в template самый
     свежий из них (последний в списке list_templates), если пользователь не попросил другой.
     Для правки существующей презентации: сначала get_presentation с её именем,
@@ -141,9 +141,10 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
 
 
 def _newest_template() -> str:
-    """Имя самого свежего .pptx-шаблона пользователя (или пустая строка)."""
-    candidates = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
-    return candidates[-1].name if candidates else ""
+    """Имя самого свежего шаблона пользователя (.pptx или .pdf)."""
+    candidates = sorted(TEMPLATES_DIR.iterdir(), key=lambda p: p.stat().st_mtime)
+    names = [p.name for p in candidates if p.suffix.lower() in (".pptx", ".pdf")]
+    return names[-1] if names else ""
 
 
 def _preferred_template() -> str:
@@ -184,10 +185,14 @@ def list_images() -> str:
 
 @mcp.tool()
 def list_templates() -> str:
-    """Список .pptx-шаблонов, загруженных пользователем (свежий — последним).
+    """Список шаблонов, загруженных пользователем (.pptx или .pdf; свежий — последним).
+    .pptx — слайды собираются в стиле шаблона; .pdf — страницы PDF становятся
+    фоном слайдов, текст кладётся на карточки.
     Имя шаблона нужно передать в save_presentation параметром template.
-    Если шаблоны есть — создавай презентации по самому свежему."""
-    files = sorted(TEMPLATES_DIR.glob("*.pptx"), key=lambda p: p.stat().st_mtime)
+    Если шаблоны есть — создавай презентации по самому свежему (или выбранному
+    пользователем, см. контекст)."""
+    files = [p for p in sorted(TEMPLATES_DIR.iterdir(), key=lambda p: p.stat().st_mtime)
+             if p.suffix.lower() in (".pptx", ".pdf")]
     names = [p.name for p in files]
     if not names:
         return "Пользователь пока не загрузил шаблонов."
