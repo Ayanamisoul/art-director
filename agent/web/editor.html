@@ -27,20 +27,28 @@
   .meta label { font-size: 11px; color: #9a8f83; }
   .meta input[type=color] { padding: 2px; height: 34px; }
   .preview { overflow-y: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
-  .pv-slide { width: 100%; aspect-ratio: 16/9; border-radius: 6px; padding: 4% 5%; box-shadow: 0 4px 24px rgba(0,0,0,.4); position: relative; overflow: hidden; }
-  .pv-slide.dense li { font-size: clamp(9px, 1.05vw, 13px); margin-bottom: 1%; }
-  .pv-flex { display: flex; gap: 4%; height: 100%; align-items: flex-start; }
-  .pv-flex .txt { flex: 1.2; min-width: 0; }
-  .pv-flex img { flex: 1; max-width: 44%; max-height: 85%; object-fit: contain; border-radius: 4px; }
-  .pv-title-slide, .pv-closing { color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  /* --- предпросмотр: геометрия 1:1 с PPTX, размеры в % от ширины слайда (cqw) --- */
+  .pv-slide { flex: none; width: 100%; max-width: 1180px; aspect-ratio: 16/9; border-radius: 6px;
+    padding: 5.2%; container-type: inline-size; position: relative; overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4); background: #fff; color: #2b2b2b; }
+  .pv-title-slide, .pv-closing { color: #fff; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; text-align: center; }
   .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
-  .pv-content { background: #fff; color: #2b2b2b; }
-  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.3%; }
-  .pv-content h3 { margin: 0 0 3%; font-size: clamp(13px, 1.9vw, 22px); }
-  .pv-content ul { margin: 0; padding-left: 1.2em; }
-  .pv-content li { font-size: clamp(10px, 1.35vw, 15px); margin-bottom: 1.5%; line-height: 1.35; }
-  .pv-title-slide h2 { font-size: clamp(17px, 2.6vw, 32px); margin: 0 0 2%; }
-  .pv-title-slide p, .pv-closing p { font-size: clamp(11px, 1.5vw, 18px); opacity: .85; }
+  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.35cqw; }
+  /* 32pt заголовок = 0.444in = 3.33% ширины слайда 13.333in */
+  .pv-content h3 { margin: 0 0 4cqw; font-size: 3.33cqw; font-weight: 700; }
+  /* 22pt пункт = 2.29cqw; 14pt интервал = 1.46cqw */
+  .pv-content ul { margin: 0; padding-left: 1.6cqw; }
+  .pv-content li { font-size: 2.29cqw; margin-bottom: 1.46cqw; line-height: 1.35; }
+  .pv-content.dense li { font-size: 1.87cqw; margin-bottom: 1cqw; }
+  /* 44pt титул = 4.58cqw, 20pt подзаголовок = 2.08cqw, 40pt раздел = 4.17cqw */
+  .pv-title-slide h2, .pv-closing h2 { font-size: 4.58cqw; margin: 0 0 1.6cqw; }
+  .pv-title-slide p, .pv-closing p { font-size: 2.08cqw; opacity: .85; }
+  .pv-section h2 { font-size: 4.17cqw; }
+  /* картинка справа: в PPTX 5.2in из 13.333in = 39% ширины */
+  .pv-flex { display: flex; gap: 3.5cqw; height: 100%; align-items: flex-start; }
+  .pv-flex .txt { flex: 1 1 55%; min-width: 0; }
+  .pv-flex img { flex: 0 1 39%; max-height: 78%; object-fit: contain; border-radius: .5cqw; }
   #status { font-size: 13px; padding: 8px 20px; }
   #status.err { color: #e88; } #status.ok { color: #8c8; }
 </style>
@@ -139,7 +147,7 @@ function renderPreview() {
       div.style.background = accent;
       div.innerHTML = `<h2>${esc(s.title)}</h2>`;
     } else {
-      const dense = (s.bullets || []).length > 3;
+      const dense = (s.bullets || []).length > 4;
       const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
         <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
       div.className = 'pv-slide pv-content' + (dense ? ' dense' : '');

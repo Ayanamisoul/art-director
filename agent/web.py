@@ -201,6 +201,9 @@ async def list_files():
 
 # --- загрузки пользователя: изображения и шаблоны (local-first) ---
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"}
+
+
 def _safe_filename(raw: str) -> str:
     name = Path(raw).name
     if not name or name.startswith("."):
@@ -211,17 +214,25 @@ def _safe_filename(raw: str) -> str:
 @app.post("/api/assets")
 async def upload_asset(file: UploadFile):
     name = _safe_filename(file.filename or "image.png")
+    if Path(name).suffix.lower() not in IMAGE_EXTS:
+        raise HTTPException(400, f"«{name}» — не изображение. Форматы: "
+                                 f"{', '.join(sorted(e.lstrip('.') for e in IMAGE_EXTS))}")
+    for p in ASSETS_DIR.iterdir():  # инвариант: имена без регистра
+        if p.name.lower() == name.lower():
+            name = p.name
+            break
+    replaced = (ASSETS_DIR / name).exists()
     (ASSETS_DIR / name).write_bytes(await file.read())
-    return {"ok": True, "name": name}
+    return {"ok": True, "name": name, "replaced": replaced}
 
 
 @app.post("/api/templates")
 async def upload_template(file: UploadFile):
     name = _safe_filename(file.filename or "template.pptx")
-    if not name.lower().endswith(".pptx"):
-        raise HTTPException(400, "шаблон должен быть .pptx")
+    if Path(name).suffix.lower() != ".pptx":
+        raise HTTPException(400, f"«{name}» — не шаблон. Нужен файл .pptx (PowerPoint)")
     (TEMPLATES_DIR / name).write_bytes(await file.read())
-    return {"ok": True, "name": name}
+    return {"ok": True, "name": name, "replaced": (TEMPLATES_DIR / name).exists()}
 
 
 @app.get("/api/assets")

@@ -30,23 +30,43 @@
   a.edit-btn { display: block; margin: 0 0 10px; padding: 6px 10px; border: 1px solid var(--accent); border-radius: 8px; color: var(--accent); text-decoration: none; font-size: 12px; text-align: center; }
   a.edit-btn:hover { background: var(--accent); color: #14110f; }
   .hint { font-size: 12px; color: #9a8f83; margin-bottom: 12px; }
-  /* предпросмотр презентации в чате */
-  .pv-wrap { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
-  .pv-slide { width: 100%; aspect-ratio: 16/9; border-radius: 6px; padding: 4% 5%; position: relative; overflow: hidden; box-shadow: 0 4px 18px rgba(0,0,0,.4); }
-  .pv-title-slide { color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; }
+  /* предпросмотр презентации в чате — та же геометрия, что у PPTX (cqw от ширины слайда) */
+  .pv-wrap { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; align-items: stretch; }
+  .pv-slide { flex: none; width: 100%; aspect-ratio: 16/9; border-radius: 6px; padding: 5.2%;
+    container-type: inline-size; position: relative; overflow: hidden; box-shadow: 0 4px 18px rgba(0,0,0,.4);
+    background: #fff; color: #2b2b2b; }
+  .pv-title-slide { color: #fff; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; text-align: center; }
   .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
   .pv-content { background: #fff; color: #2b2b2b; }
-  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.3%; }
-  .pv-content h3 { margin: 0 0 4%; font-size: 15px; }
-  .pv-content li { font-size: 12px; margin-bottom: 2%; }
-  .pv-title-slide h2 { font-size: 19px; margin: 0 0 2%; }
-  .pv-title-slide p { font-size: 12px; opacity: .85; }
+  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.35cqw; }
+  .pv-content h3 { margin: 0 0 4cqw; font-size: 3.33cqw; font-weight: 700; }
+  .pv-content ul { margin: 0; padding-left: 1.6cqw; }
+  .pv-content li { font-size: 2.29cqw; margin-bottom: 1.46cqw; line-height: 1.35; }
+  .pv-content.dense li { font-size: 1.87cqw; margin-bottom: 1cqw; }
+  .pv-title-slide h2 { font-size: 4.58cqw; margin: 0 0 1.6cqw; }
+  .pv-title-slide p { font-size: 2.08cqw; opacity: .85; }
+  .pv-flex { display: flex; gap: 3.5cqw; height: 100%; align-items: flex-start; }
+  .pv-flex .txt { flex: 1 1 55%; min-width: 0; }
+  .pv-flex img { flex: 0 1 39%; max-height: 78%; object-fit: contain; border-radius: .5cqw; }
   iframe.landing-pv { width: 100%; aspect-ratio: 16/10; border: none; border-radius: 6px; background: #fff; margin-top: 10px; }
   a.big-edit-btn { display: inline-block; margin-top: 10px; padding: 8px 18px; background: var(--accent); color: #14110f; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; }
+  .upload-btn { display: block; width: 100%; margin-bottom: 8px; padding: 8px 10px; background: none; border: 1px dashed #3a322b; border-radius: 8px; color: var(--text); font-size: 12px; cursor: pointer; text-align: center; }
+  .upload-btn:hover { border-color: var(--accent); color: var(--accent); }
+  /* зона перетаскивания файлов */
+  #dropzone { position: fixed; inset: 0; z-index: 100; display: none;
+    align-items: center; justify-content: center; flex-direction: column; gap: 10px;
+    background: rgba(20, 17, 15, .88); border: 3px dashed var(--accent); border-radius: 12px;
+    color: var(--accent); font-size: 22px; font-weight: bold; pointer-events: none; }
+  #dropzone.on { display: flex; }
+  #dropzone small { color: var(--text); font-weight: normal; font-size: 13px; opacity: .8; }
+  .msg.agent.upload { background: #24201c; border-color: #3a322b; font-size: 13px; color: #c9c0b6; }
+  .msg.agent.upload.err { color: #e88; border-color: #5a3a3a; }
 </style>
 </head>
 <body>
 <div class="layout">
+  <div id="dropzone">⬇ Брось файлы сюда<small>картинки → изображения для презы · .pptx → шаблон презентации</small></div>
   <div class="chat">
     <header>
       <h1>Арт-директор</h1>
@@ -64,6 +84,10 @@
   <aside>
     <h2>Файлы</h2>
     <div class="hint">Всё сохраняется локально на этом компьютере.</div>
+    <button class="upload-btn" onclick="document.getElementById('up-img').click()">📷 Загрузить изображение</button>
+    <button class="upload-btn" onclick="document.getElementById('up-tpl').click()">📐 Загрузить шаблон .pptx</button>
+    <input type="file" id="up-img" accept="image/*" multiple hidden>
+    <input type="file" id="up-tpl" accept=".pptx" hidden>
     <div id="files"></div>
   </aside>
 </div>
@@ -121,10 +145,13 @@ async function renderSlidesPreview(container, name) {
       d.style.background = accent;
       d.innerHTML = `<h2>${esc(s.title)}</h2>`;
     } else {
-      d.className = 'pv-slide pv-content';
-      d.innerHTML = `<div class="bar" style="background:${accent}"></div>
-        <h3 style="color:${accent}">${esc(s.title)}</h3>
+      const dense = (s.bullets || []).length > 4;
+      const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
         <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
+      d.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
+      d.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
+        ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
+        : text);
     }
     wrap.appendChild(d);
   });
@@ -193,23 +220,99 @@ form.addEventListener('submit', async (e) => {
 
 refreshFiles();
 
-document.getElementById('up-img').addEventListener('change', e => upload(e, '/api/assets'));
-document.getElementById('up-tpl').addEventListener('change', e => upload(e, '/api/templates'));
+// ---------- загрузка файлов: кнопки, drag&drop, вставка из буфера ----------
+document.getElementById('up-img').addEventListener('change', e => uploadInput(e));
+document.getElementById('up-tpl').addEventListener('change', e => uploadInput(e));
 
-async function upload(e, url) {
-  const file = e.target.files[0];
-  if (!file) return;
+async function uploadInput(e) {
+  const files = Array.from(e.target.files || []);
+  e.target.value = '';
+  for (const file of files) await uploadOne(file);
+}
+
+function kindOf(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if (ext === 'pptx') return { url: '/api/templates', label: 'шаблон' };
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) return { url: '/api/assets', label: 'изображение' };
+  return null;
+}
+
+async function uploadOne(file) {
+  const kind = kindOf(file);
+  if (!kind) {
+    note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg) и шаблоны .pptx`, true);
+    return;
+  }
+  const pill = note(`⏳ Загружаю «${file.name}» как ${kind.label}…`);
   const fd = new FormData();
   fd.append('file', file);
-  const r = await fetch(url, { method: 'POST', body: fd });
-  const res = await r.json();
-  if (res.ok) {
-    addMsg('agent', `Загружено: ${res.name}. Теперь можно попросить агента использовать это в презентации — он видит файлы через list_images / list_templates.`);
-  } else {
-    addMsg('agent', 'Ошибка загрузки: ' + (res.detail || 'неизвестно'));
+  try {
+    const r = await fetch(kind.url, { method: 'POST', body: fd });
+    const res = await r.json();
+    if (res.ok) {
+      pill.textContent = `✅ «${res.name}» — ${kind.label} загружен. Агент видит файл через ${kind.url === '/api/assets' ? 'list_images' : 'list_templates'}.`;
+    } else {
+      pill.textContent = `❌ «${file.name}» не загружен: ${res.detail || 'ошибка сервера'}`;
+      pill.classList.add('err');
+    }
+  } catch (err) {
+    pill.textContent = `❌ «${file.name}» не загружен: ${err}`;
+    pill.classList.add('err');
   }
-  e.target.value = '';
+  refreshFiles();
 }
+
+function note(text, isError) {
+  const div = document.createElement('div');
+  div.className = 'msg agent upload' + (isError ? ' err' : '');
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return div;
+}
+
+// --- перетаскивание файлов в любое место окна ---
+const dropzone = document.getElementById('dropzone');
+let dragDepth = 0;
+const hasFiles = e => Array.from((e.dataTransfer && e.dataTransfer.types) || []).includes('Files');
+
+window.addEventListener('dragenter', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  dropzone.classList.add('on');
+});
+window.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('dragleave', e => {
+  if (!hasFiles(e)) return;
+  if (--dragDepth <= 0) { dragDepth = 0; dropzone.classList.remove('on'); }
+});
+window.addEventListener('drop', async e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  dropzone.classList.remove('on');
+  for (const file of Array.from(e.dataTransfer.files)) await uploadOne(file);
+});
+
+// --- вставка скриншота из буфера (Ctrl+V) ---
+document.addEventListener('paste', async e => {
+  const items = Array.from((e.clipboardData && e.clipboardData.items) || []);
+  const images = items.filter(i => i.type.startsWith('image/'));
+  if (!images.length) return;
+  e.preventDefault();
+  for (const [index, item] of images.entries()) {
+    const blob = item.getAsFile();
+    if (!blob) continue;
+    const ext = (blob.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+    const stamp = new Date().toISOString().slice(11, 19).replace(/:/g, '-');
+    await uploadOne(new File([blob], `вставка-${stamp}${index ? '-' + index : ''}.${ext}`, { type: blob.type }));
+  }
+});
 </script>
 </body>
 </html>
