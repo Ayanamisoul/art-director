@@ -352,42 +352,43 @@ def _freeform_role(slide) -> str | None:
 
 def _build_on_skeleton(prs, data: dict) -> bool:
     """Наложить нашу структуру на слайды шаблона, сохранив их дизайн.
-    Возвращает False, если в шаблоне нет ни титульного, ни контентного слайда."""
-    skeletons: dict[str, list] = {"title": [], "content": [], "section": []}
-    modes: dict[int, str] = {}
-    for s in list(prs.slides):
-        role = _slide_role(s)
-        mode = "ph" if role else None
-        if not role:
-            role = _freeform_role(s)
-            mode = "ff" if role else None
-        if role:
-            skeletons[role].append(s)
-            modes[id(s)] = mode
-    if not skeletons["title"] or not skeletons["content"]:
+    Раскладка по позиции: ПЕРВЫЙ лист шаблона — титул, ПОСЛЕДНИЙ — финал
+    (контакты), средние — контент. Каждая роль при нехватке клонируется.
+    Возвращает False, если в шаблоне меньше двух слайдов."""
+    slides = list(prs.slides)
+    if len(slides) < 2:
         return False
+    pools: dict[str, list] = {
+        "title": [slides[0]],
+        "closing": [slides[-1]],
+        "content": slides[1:-1] or [slides[-1]],
+    }
+    modes: dict[int, str] = {}
+    for pool in pools.values():
+        for s in pool:
+            modes[id(s)] = "ph" if _slide_role(s) else "ff"
 
     used: set[int] = set()
     ordered: list = []
 
     def take(role: str):
-        pool = skeletons.get(role) or skeletons["content"] or skeletons["title"]
+        pool = pools[role]
         for s in pool:
             if id(s) not in used:
                 used.add(id(s))
                 return s
-        clone = _duplicate_slide(prs, pool[0])
-        modes[id(clone)] = modes[id(pool[0])]
+        clone = _duplicate_slide(prs, pool[-1])
+        modes[id(clone)] = modes[id(pool[-1])]
         used.add(id(clone))  # клон — тоже «наш», иначе цикл удаления его снесёт
         return clone
 
     for sd in data["slides"]:
         kind = sd.get("kind", "content")
-        if kind in ("title", "closing"):
+        if kind == "title":
             base = take("title")
-        elif kind == "section":
-            base = take("section") if skeletons["section"] else take("content")
-        else:
+        elif kind == "closing":
+            base = take("closing")
+        else:  # content и section — средние листы
             base = take("content")
         if modes[id(base)] == "ph":
             _retext_slide(prs, base, sd)
@@ -443,7 +444,7 @@ def _retext_slide(prs, slide, sd: dict) -> None:
 def _retext_freeform(prs, slide, sd: dict) -> None:
     """То же для «дизайнерских» слайдов: текст живёт в обычных текстбоксах.
     Крупнейший текстбокс считаем заголовком, следующий — телом/подзаголовком.
-    Форматирование ранов сохраняем."""
+    Форматирование ранов-прототипов сохраняем."""
     kind = sd.get("kind", "content")
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
@@ -451,24 +452,32 @@ def _retext_freeform(prs, slide, sd: dict) -> None:
     image_path = _slide_image(sd)
     texts = _text_shapes(slide)
     if not texts:
-        _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+        if image_path:
+            _add_template_image(slide, prs, image_path)
         return
-    _set_shape_lines(texts[0], [title])
-    rest = texts[1:]
-    if kind == "content" and rest:
-        body = rest[0]
-        _set_shape_lines(body, bullets)
-        if image_path and body.width > int(prs.slide_width * 0.55):
-            body.width = int(prs.slide_width * 0.52)
-        for sp in rest[1:]:
-            _set_shape_lines(sp, [])
-    else:
-        note = subtitle or ("Контакты" if kind == "closing" else "")
-        if rest:
-            _set_shape_lines(rest[0], [note] if note else [])
-        for sp in rest[1:]:
-            _set_shape_lines(sp, [])
-    _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+
+    if kind == "content":
+        _set_shape_lines(texts[0], [title])
+        if len(texts) > 1:
+            body = texts[1]
+            _set_shape_lines(body, bullets)
+            if image_path and body.width > int(prs.slide_width * 0.55):
+                body.width = int(prs.slide_width * 0.52)
+            for sp in texts[2:]:
+                _set_shape_lines(sp, [])
+        if image_path:
+            _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+        return
+
+    # титул / финал / разделитель: крупный шейп <- заголовок (+ подзаголовок
+    # вторым абзацем, как «Должность докладчика» в шаблоне Политеха)
+    note = subtitle or ("Контакты" if kind == "closing" else "")
+    lines = [title] + ([note] if note else [])
+    _set_shape_lines(texts[0], lines)
+    for sp in texts[1:]:
+        _set_shape_lines(sp, [])
+    if image_path:
+        _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
 
 
 def _slide_image(sd: dict) -> Path | None:
