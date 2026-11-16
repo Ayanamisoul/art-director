@@ -21,6 +21,7 @@ from mcp.server.mcpserver import MCPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # доступ к agent/
 from pptx_builder import build_presentation, normalize_slide, validate_presentation
+from previews import render_pptx_previews
 from validation import validate_html
 
 # <репо>/data/artifacts/ — вне git (см. .gitignore)
@@ -133,6 +134,9 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
         _json.dumps({**data, "theme": theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
     note = f", по шаблону {template_name}" if template_name else ""
+    previews = render_pptx_previews(path)
+    if previews:
+        note += f", готовы превью ({previews} слайдов)"
     return f"Презентация сохранена и прошла проверку: {path} ({len(slides)} слайдов{note})"
 
 

@@ -60,6 +60,8 @@
   .pv-flex .txt { flex: 1 1 55%; min-width: 0; }
   .pv-flex img { flex: 0 1 39%; max-height: 78%; object-fit: contain; border-radius: .5cqw; }
   iframe.landing-pv { width: 100%; aspect-ratio: 16/10; border: none; border-radius: 6px; background: #fff; margin-top: 10px; }
+  .pv-shot { display: block; width: 100%; border-radius: 6px; box-shadow: 0 4px 18px rgba(0,0,0,.4); margin-bottom: 4px; }
+  .pv-src { display: block; font-size: 11px; color: #9a8f83; margin-top: 4px; }
   a.big-edit-btn { display: inline-block; margin-top: 10px; padding: 8px 18px; background: var(--accent); color: #14110f; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; }
   .upload-btn { display: block; width: 100%; margin-bottom: 8px; padding: 8px 10px; background: none; border: 1px dashed #3a322b; border-radius: 8px; color: var(--text); font-size: 12px; cursor: pointer; text-align: center; }
   .upload-btn:hover { border-color: var(--accent); color: var(--accent); }
@@ -149,27 +151,45 @@ async function renderSlidesPreview(container, name) {
   const accent = '#' + ((data.theme && data.theme.accent) || '2E5E4E');
   const wrap = document.createElement('div');
   wrap.className = 'pv-wrap';
-  data.slides.forEach(s => {
-    const d = document.createElement('div');
-    if (s.kind === 'title' || s.kind === 'closing') {
-      d.className = 'pv-slide pv-title-slide';
-      d.style.background = '#1A2E28';
-      d.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
-    } else if (s.kind === 'section') {
-      d.className = 'pv-slide pv-section';
-      d.style.background = accent;
-      d.innerHTML = `<h2>${esc(s.title)}</h2>`;
-    } else {
-      const dense = (s.bullets || []).length > 4;
-      const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
-        <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
-      d.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
-      d.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
-        ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
-        : text);
+  // настоящие рендеры слайдов (если готовы) вместо CSS-схемы — они показывают
+  // реальный дизайн шаблона, как в PowerPoint
+  const pv = await fetch('/api/presentation/' + encodeURIComponent(name) + '/previews')
+    .then(x => x.json()).catch(() => ({ready: false}));
+  if (pv.ready) {
+    for (let i = 1; i <= pv.count; i++) {
+      const img = document.createElement('img');
+      img.className = 'pv-shot';
+      img.loading = 'lazy';
+      img.src = '/previews/' + encodeURIComponent(name) + '/p' + i + '.png';
+      wrap.appendChild(img);
     }
-    wrap.appendChild(d);
-  });
+    const src = document.createElement('span');
+    src.className = 'pv-src';
+    src.textContent = 'рендер из файла .pptx';
+    wrap.appendChild(src);
+  } else {
+    data.slides.forEach(s => {
+      const d = document.createElement('div');
+      if (s.kind === 'title' || s.kind === 'closing') {
+        d.className = 'pv-slide pv-title-slide';
+        d.style.background = '#1A2E28';
+        d.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
+      } else if (s.kind === 'section') {
+        d.className = 'pv-slide pv-section';
+        d.style.background = accent;
+        d.innerHTML = `<h2>${esc(s.title)}</h2>`;
+      } else {
+        const dense = (s.bullets || []).length > 4;
+        const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
+          <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
+        d.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
+        d.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
+          ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
+          : text);
+      }
+      wrap.appendChild(d);
+    });
+  }
   container.appendChild(wrap);
   const btn = document.createElement('a');
   btn.className = 'big-edit-btn';

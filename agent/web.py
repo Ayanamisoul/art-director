@@ -29,6 +29,7 @@ from judge import semantic_check
 from mcp_client import MCPToolbox
 from prompts import SKILLS
 from pptx_builder import build_presentation, normalize_slide, validate_presentation
+from previews import render_pptx_previews
 from validation import _visible_text, validate_html
 from main import agent_reply
 import json as jsonlib
@@ -40,7 +41,8 @@ DATA_DIR = ROOT / "data" / "artifacts"
 ASSETS_DIR = ROOT / "data" / "assets"
 TEMPLATES_DIR = ROOT / "data" / "templates"
 SESSIONS_DIR = ROOT / "data" / "sessions"
-for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR, SESSIONS_DIR):
+PREVIEW_DIR = DATA_DIR / "previews"
+for d in (DATA_DIR, ASSETS_DIR, TEMPLATES_DIR, SESSIONS_DIR, PREVIEW_DIR):
     d.mkdir(parents=True, exist_ok=True)
 WEB_DIR = Path(__file__).parent / "web"
 
@@ -77,6 +79,17 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Арт-директор", lifespan=lifespan)
 app.mount("/files", StaticFiles(directory=DATA_DIR), name="files")
 app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
+app.mount("/previews", StaticFiles(directory=PREVIEW_DIR), name="previews")
+
+
+@app.get("/api/presentation/{name}/previews")
+async def presentation_previews(name: str):
+    """Есть ли настоящие PNG-превью слайдов (рендер из файла) и сколько."""
+    out_dir = DATA_DIR / "previews" / name
+    if not out_dir.exists():
+        return {"ready": False, "count": 0}
+    count = len(list(out_dir.glob("p*.png")))
+    return {"ready": count > 0, "count": count}
 
 
 class ChatRequest(BaseModel):
@@ -314,6 +327,7 @@ async def save_presentation_endpoint(name: str, data: PresentationSave):
     path.with_suffix(".json").write_text(
         jsonlib.dumps({**payload, "theme": data.theme}, ensure_ascii=False, indent=2),
         encoding="utf-8")
+    render_pptx_previews(path)  # обновить настоящие превью после правки
     return {"ok": True, "file": f"/files/{name}.pptx"}
 
 
