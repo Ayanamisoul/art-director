@@ -371,6 +371,7 @@ def _build_on_skeleton(prs, data: dict) -> bool:
                 return s
         clone = _duplicate_slide(prs, pool[0])
         modes[id(clone)] = modes[id(pool[0])]
+        used.add(id(clone))  # клон — тоже «наш», иначе цикл удаления его снесёт
         return clone
 
     for sd in data["slides"]:
