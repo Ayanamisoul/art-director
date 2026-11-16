@@ -619,7 +619,7 @@ def _rasterize_pdf(template: Path, remove_images: str = "auto") -> list[Path]:
     cache = template.parent / "pdf_cache" / f"{template.stem}-{remove_images}"
     pdf_mtime = template.stat().st_mtime
     marker = cache / "source.mtime"
-    pages = sorted(cache.glob("p*.png"))
+    pages = sorted(cache.glob("p*.png"), key=lambda f: int(f.stem[1:]))
     if pages and marker.exists():
         try:
             if abs(float(marker.read_text()) - pdf_mtime) < 1:
@@ -673,7 +673,9 @@ def _rasterize_pdf(template: Path, remove_images: str = "auto") -> list[Path]:
         page.get_pixmap(matrix=fitz.Matrix(zoom, zoom)).save(
             str(cache / f"p{i + 1}.png"))
     marker.write_text(str(pdf_mtime))
-    return sorted(cache.glob("p*.png"))
+    # НАТУРАЛЬНАЯ сортировка: иначе p10, p11... встают между p1 и p2,
+    # и «последняя страница» оказывается девятой
+    return sorted(cache.glob("p*.png"), key=lambda f: int(f.stem[1:]))
 
 
 def _block_fill_color(page, rect) -> tuple:
