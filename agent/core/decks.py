@@ -17,6 +17,8 @@ from pptx_builder import build_presentation, normalize_slide, validate_presentat
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "pptx2pdf.ps1"
 
 
+
+
 def _safe_name(name: str) -> str:
     import re
     name = re.sub(r"\.(pptx|json|pdf)$", "", name.strip(), flags=re.IGNORECASE)
@@ -94,22 +96,17 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
 
 def agent_save_presentation(name: str, title: str, slides: list[dict],
                             subtitle: str = "", accent_color: str = "",
-                            template: str = "",
+                            template: str = "",  # игнорируется: шаблон выбирает пользователь
                             template_images: str = "auto") -> str:
     """Сборка по структуре от модели. Строка-ответ для модели (как в MCP-инструменте).
     Если template не передан — применяется выбранный пользователем (или свежий)."""
     data = {"title": title, "subtitle": subtitle,
             "slides": [normalize_slide(s) for s in slides]}
     issues = validate_presentation(data)
-    template_name = ""
-    template_path = None
-    if template:
-        template_name = Path(template).name
-        template_path = TEMPLATES_DIR / template_name
-        if not template_path.exists():
-            issues.append(f"шаблон «{template}» не найден — вызови list_templates")
-    elif template_name := preferred_template():
-        template_path = TEMPLATES_DIR / template_name
+    # шаблон выбирает ПОЛЬЗОВАТЕЛЬ (.preferred в UI); параметр template от модели
+    # сознательно игнорируется — иначе модель угадывает шаблон по имени файла
+    template_name = preferred_template()
+    template_path = TEMPLATES_DIR / template_name if template_name else None
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "
                 + "\n- ".join(issues))

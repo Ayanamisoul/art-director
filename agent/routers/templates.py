@@ -30,6 +30,11 @@ async def upload_template(file: UploadFile):
     return {"ok": True, "name": saved, "replaced": replaced}
 
 
+@router.get("/api/templates/preferred")
+async def get_preferred_template():
+    return {"preferred": templates.preferred()}
+
+
 @router.post("/api/templates/preferred")
 async def set_preferred_template(body: PreferredTemplate):
     """Выбор шаблона из выпадающего списка (пустое имя = авто/самый свежий)."""

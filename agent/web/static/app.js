@@ -235,12 +235,14 @@ refreshFiles();
 
 // ---------- выбор шаблона презентаций ----------
 async function refreshTemplates() {
-  const r = await fetch('/api/templates');
-  const data = await r.json();
+  const [list, pref] = await Promise.all([
+    fetch('/api/templates').then(r => r.json()),
+    fetch('/api/templates/preferred').then(r => r.json()).catch(() => ({preferred: ''})),
+  ]);
   const sel = document.getElementById('template');
-  const current = sel.value;
+  const current = sel.value || pref.preferred;
   sel.innerHTML = '<option value="">Авто — самый свежий загруженный</option>' +
-    data.files.map(f => '<option value="' + esc(f) + '">' + esc(f) + '</option>').join('');
+    list.files.map(f => '<option value="' + esc(f) + '">' + esc(f) + '</option>').join('');
   sel.value = current;
 }
 document.getElementById('template').addEventListener('change', async e => {
@@ -264,7 +266,7 @@ async function uploadInput(e) {
 
 function kindOf(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (ext === 'pptx' || ext === 'pdf') return { url: '/api/templates', label: 'шаблон' };
+  if (ext === 'pptx') return { url: '/api/templates', label: 'шаблон' };
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) return { url: '/api/assets', label: 'изображение' };
   return null;
 }

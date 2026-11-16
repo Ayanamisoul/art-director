@@ -24,8 +24,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import BACKENDS
+from config import BACKENDS, DEFAULT_BACKEND
 from core import sessions as core_sessions
+from core import templates as core_templates
 from core.artifacts import DATA_DIR
 from core.assets import ASSETS_DIR
 from core.previews import PREVIEW_DIR
@@ -156,6 +157,9 @@ async def chat_endpoint(req: ChatRequest):
 
     tool_log: list[str] = []
     backend = BACKENDS[state["backend"]]
+    # выбор шаблона пользователем важнее догадок модели — фиксируем на каждый ход
+    core_templates.set_preferred(state.get("chosen_template")
+                                 or core_templates.newest())
     try:
         answer = await agent_reply(backend, state["messages"], toolbox, log=tool_log)
     except Exception as exc:
