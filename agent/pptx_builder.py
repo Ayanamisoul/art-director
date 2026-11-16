@@ -806,8 +806,9 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path,
                   remove_images: str = "auto") -> None:
     """Слайды поверх страниц PDF: фон — картинка страницы, текст — на карточке.
 
-    Титул берёт страницу 1, контентные слайды — страницы 2..N (циклически),
-    финал — последнюю страницу. Пропорции слайда = пропорции страницы PDF.
+    Титул — первая страница шаблона, ФИНАЛ — последняя (у брендовых PDF там
+    контакты/призыв к действию), контентные слайды — средние страницы
+    (циклически). Пропорции слайда = пропорции страницы PDF.
     """
     pages = _rasterize_pdf(template, remove_images=remove_images)
     if not pages:
@@ -826,7 +827,7 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path,
         title_color = "%02X%02X%02X" % tuple(int(c * 255) for c in accent)
     else:
         title_color = t.get("accent", DEFAULT_THEME["accent"])
-    content_pages = pages[1:] or pages
+    middle_pages = pages[1:-1] or pages  # средние страницы — под контент
     content_idx = 0
 
     for sd in data["slides"]:
@@ -834,10 +835,12 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path,
         title = str(sd.get("title") or "")
         subtitle = str(sd.get("subtitle") or ("Контакты" if kind == "closing" else ""))
         bullets = [str(b) for b in (sd.get("bullets") or [])] if kind == "content" else []
-        if kind in ("title", "closing"):
-            bg = pages[0]
+        if kind == "title":
+            bg = pages[0]              # первая страница — дизайн титула
+        elif kind == "closing":
+            bg = pages[-1]             # последняя — дизайн финала (контакты)
         else:
-            bg = content_pages[min(content_idx, len(content_pages) - 1)]
+            bg = middle_pages[min(content_idx, len(middle_pages) - 1)]
             content_idx += 1
         slide = prs.slides.add_slide(prs.slide_layouts[6])
         slide.shapes.add_picture(str(bg), 0, 0, width=sw, height=sh)
