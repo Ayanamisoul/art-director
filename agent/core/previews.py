@@ -11,8 +11,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "pptx2pdf.ps1"
+PREVIEW_DIR = ROOT / "data" / "artifacts" / "previews"
+PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def render_pptx_previews(pptx_path: Path, max_slides: int = 10,

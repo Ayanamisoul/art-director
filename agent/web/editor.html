@@ -60,6 +60,7 @@
   <span class="spacer"></span>
   <span id="status"></span>
   <button onclick="save()">Сохранить и пересобрать PPTX</button>
+  <button onclick="exportPdf()">📄 Сохранить в PDF</button>
 </header>
 <div class="layout">
   <div class="slides-col">
@@ -159,6 +160,17 @@ function renderPreview() {
   });
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+async function exportPdf() {
+  const btn = event.target;
+  btn.textContent = '⏳ Готовлю PDF…';
+  try {
+    const r = await fetch('/api/presentation/' + encodeURIComponent(name) + '/pdf', { method: 'POST' });
+    const res = await r.json();
+    if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); btn.textContent = '📄 Сохранить в PDF'; }
+    else { btn.textContent = '❌ ' + (res.detail || 'ошибка'); }
+  } catch (err) { btn.textContent = '❌ ' + err; }
+}
 
 async function save() {
   data.title = document.getElementById('p-title').value;
