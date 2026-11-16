@@ -116,7 +116,7 @@ function renderEditor() {
       <input class="t" placeholder="Заголовок слайда" value="${(s.title || '').replace(/"/g, '&quot;')}">
       ${isTitleLike
         ? `<input class="s" placeholder="Подзаголовок" value="${(s.subtitle || '').replace(/"/g, '&quot;')}">`
-        : `<textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join('\n')}</textarea>
+        : `<textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join(String.fromCharCode(10))}</textarea>
            <select class="img" title="Изображение на слайд">${imgOptions}</select>`}`;
     div.querySelector('select').onchange = e => { s.kind = e.target.value; renderEditor(); renderPreview(); };
     div.querySelector('.t').oninput = e => { s.title = e.target.value; renderPreview(); };
@@ -124,7 +124,7 @@ function renderEditor() {
     if (sub) sub.oninput = e => { s.subtitle = e.target.value; renderPreview(); };
     const bul = div.querySelector('.b');
     if (bul) bul.oninput = e => {
-      s.bullets = e.target.value.split('\n').filter(x => x.trim()); renderPreview();
+      s.bullets = e.target.value.split(String.fromCharCode(10)).filter(function (x) { return x.trim(); }).map(function (x) { return {text: x, sub: []}; });
     };
     const imgSel = div.querySelector('.img');
     if (imgSel) imgSel.onchange = e => { s.image = e.target.value || undefined; renderPreview(); };
@@ -150,7 +150,7 @@ function renderPreview() {
     } else {
       const dense = (s.bullets || []).length > 4;
       const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
-        <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
+        <ul>${(s.bullets || []).map(b => `<li>${esc(bt(b))}</li>`).join('')}</ul>`;
       div.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
       div.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
         ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
@@ -160,6 +160,7 @@ function renderPreview() {
   });
 }
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function bt(b) { return typeof b === 'string' ? b : (b && b.text ? b.text : ''); }
 
 async function exportPdf() {
   const btn = event.target;

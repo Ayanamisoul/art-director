@@ -224,12 +224,20 @@ def _last_artifact_summary(messages: list[dict]) -> str | None:
                 if args.get("accent_color"):
                     lines.append(f"Акцентный цвет: {args['accent_color']}")
                 for s in args.get("slides", []):
-                    bullets = s.get("bullets") or []
-                    if isinstance(bullets, str):
-                        bullets = [bullets]
+                    blines = []
+                    for b in s.get("bullets") or []:
+                        if isinstance(b, dict):
+                            blines.append(str(b.get("text") or ""))
+                            blines += ["  - " + str(x) for x in (b.get("sub") or [])]
+                        else:
+                            blines.append(str(b))
+                    st = s.get("stats") or []
+                    stats_note = (" [цифры: " + ", ".join(
+                        (x.get("value", "") + " " + x.get("caption", "")).strip()
+                        for x in st if isinstance(x, dict)) + "]") if st else ""
                     image_note = f" [картинка: {s['image']}]" if s.get("image") else ""
-                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note} — "
-                                 + "; ".join(map(str, bullets))[:300])
+                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note}{stats_note} — "
+                                 + "; ".join(blines)[:300])
                 return "\n".join(lines)[:3000]
             text = _visible_text(args.get("html", ""))
             return "Лендинг, видимый текст:\n" + " ".join(text.split())[:2000]

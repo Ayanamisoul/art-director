@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import PP_PLACEHOLDER
+from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
 from pptx.enum.text import PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
@@ -46,6 +46,10 @@ DEFAULT_THEME = {
 
 MAX_BULLETS = 6        # больше — перегруз слайда
 MAX_BULLET_LEN = 140   # символов в буллете
+MAX_SUB = 4            # подпунктов у одного пункта
+MAX_SUB_LEN = 100      # символов в подпункте
+MAX_STATS = 3          # блоков с крупными цифрами на слайде
+MAX_TOTAL_LINES = 8    # строк на слайде (пункты + подпункты)
 
 # Модели часто используют свои имена полей — принимаем синонимы.
 _KIND_ALIASES = {
@@ -54,6 +58,21 @@ _KIND_ALIASES = {
     "end": "closing", "final": "closing", "contacts": "closing",
 }
 _BULLET_ALIASES = ("bullets", "content", "points", "items", "text")
+
+
+def _plain_bullets(bullets) -> list:
+    """Пункты в едином виде: [{"text": str, "sub": [str, ...]}]."""
+    out = []
+    for b in bullets or []:
+        if isinstance(b, dict):
+            text = str(b.get("text") or "").strip()
+            subs = [str(x).strip() for x in (b.get("sub") or []) if str(x).strip()]
+            out.append({"text": text, "sub": subs})
+        else:
+            text = str(b).strip()
+            if text:
+                out.append({"text": text, "sub": []})
+    return out
 
 
 def normalize_slide(slide: dict) -> dict:
@@ -85,6 +104,55 @@ def normalize_slide(slide: dict) -> dict:
             if ln:
                 cleaned.append(ln)
     s["bullets"] = cleaned
+    strip_re = re.compile(r"^\s*(?:\d+[.)]\s*|[-•*–]\s+)")
+    raw = bullets or []
+    # если модель прислала словари с подпунктами ({"text": ..., "sub": [...]}) —
+    # сохраняем структуру; иначе работаем со строками
+    if any(isinstance(b, dict) for b in raw):
+        items = []
+        for b in raw:
+            if isinstance(b, dict):
+                text = strip_re.sub("", str(b.get("text") or b.get("title") or "").strip()).strip()
+                if not text:
+                    continue
+                subs = [strip_re.sub("", str(x).strip())
+                        for x in (b.get("sub") or b.get("items") or [])][:MAX_SUB]
+                subs = [x[:MAX_SUB_LEN] for x in subs if x]
+                items.append({"text": text[:MAX_BULLET_LEN], "sub": subs})
+            else:
+                for ln in str(b).splitlines():
+                    ln = strip_re.sub("", ln.strip()).strip()
+                    if ln:
+                        items.append({"text": ln[:MAX_BULLET_LEN], "sub": []})
+        s["bullets"] = items
+    else:
+        cleaned = []
+        for b in raw:
+            for ln in str(b).splitlines():
+                ln = strip_re.sub("", ln.strip()).strip()
+                if ln:
+                    cleaned.append(ln)
+        s["bullets"] = cleaned
+    # блоки с крупными цифрами: {"value": "100%", "caption": "..."}
+    stats = []
+    for st in (s.get("stats") or [])[:MAX_STATS]:
+        if isinstance(st, dict):
+            v = str(st.get("value") or st.get("number") or "").strip()[:14]
+            c = str(st.get("caption") or st.get("label") or "").strip()[:80]
+            if v:
+                stats.append({"value": v, "caption": c})
+    s["stats"] = stats
+    s["frame"] = bool(s.get("frame"))
+    # блоки с крупными цифрами: {"value": "100%", "caption": "..."}
+    stats = []
+    for st in (s.get("stats") or [])[:MAX_STATS]:
+        if isinstance(st, dict):
+            v = str(st.get("value") or st.get("number") or "").strip()[:14]
+            c = str(st.get("caption") or st.get("label") or "").strip()[:80]
+            if v:
+                stats.append({"value": v, "caption": c})
+    s["stats"] = stats
+    s["frame"] = bool(s.get("frame"))
     return s
 
 
@@ -106,7 +174,7 @@ def validate_presentation(data: dict) -> list[str]:
             issues.append(f"слайд {i}: неизвестный kind «{kind}» (есть: {', '.join(sorted(kinds))})")
         if not slide.get("title"):
             issues.append(f"слайд {i}: нет title")
-        bullets = slide.get("bullets") or []
+        bullets = _plain_bullets(slide.get("bullets"))
         if kind == "content" and not bullets:
             got = ", ".join(sorted(slide.keys()))
             issues.append(
@@ -116,9 +184,26 @@ def validate_presentation(data: dict) -> list[str]:
         if len(bullets) > MAX_BULLETS:
             issues.append(f"слайд {i}: буллетов {len(bullets)} > {MAX_BULLETS} — сократи")
         for b in bullets:
-            if len(str(b)) > MAX_BULLET_LEN:
+            if len(b["text"]) > MAX_BULLET_LEN:
                 issues.append(f"слайд {i}: буллет длиннее {MAX_BULLET_LEN} символов — сократи")
                 break
+            if len(b["sub"]) > MAX_SUB:
+                issues.append(f"слайд {i}: подпунктов {len(b['sub'])} > {MAX_SUB} — сократи")
+                break
+            if any(len(x) > MAX_SUB_LEN for x in b["sub"]):
+                issues.append(f"слайд {i}: подпункт длиннее {MAX_SUB_LEN} символов — сократи")
+                break
+        total_lines = sum(1 + len(b["sub"]) for b in bullets)
+        if total_lines > MAX_TOTAL_LINES:
+            issues.append(f"слайд {i}: строк {total_lines} > {MAX_TOTAL_LINES} — раздели материал на два слайда")
+        stats = slide.get("stats") or []
+        if not isinstance(stats, list) or len(stats) > MAX_STATS:
+            issues.append(f"слайд {i}: stats — список до {MAX_STATS} блоков {{value, caption}}")
+        else:
+            for st in stats:
+                if not isinstance(st, dict) or not str(st.get("value") or "").strip():
+                    issues.append(f"слайд {i}: блок stats без value — {{\"value\": \"100%\", \"caption\": \"...\"}}")
+                    break
         image_name = slide.get("image")
         if image_name and not (ASSETS_DIR / Path(str(image_name)).name).exists():
             issues.append(f"слайд {i}: изображение «{image_name}» не найдено — "
@@ -168,7 +253,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
             accent = theme_accent_from_template(template)
             if accent:
                 t["accent"] = accent
-        if _build_on_skeleton(prs, data):
+        if _build_on_skeleton(prs, data, t):
             prs.save(path)
             return
         # фолбэк: у шаблона нет слайдов с плейсхолдерами — собираем на лейаутах
@@ -256,6 +341,7 @@ def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,
 
         else:  # content
             bullets = slide_data.get("bullets") or []
+            stats = slide_data.get("stats") or []
             image_name = slide_data.get("image")
             image_path = ASSETS_DIR / Path(str(image_name)).name if image_name else None
             has_image = bool(image_path and image_path.exists())
@@ -280,21 +366,24 @@ def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,
                 bar.fill.solid()
                 bar.fill.fore_color.rgb = _rgb(t["accent"])
                 bar.line.fill.background()
-                add_text(slide, Inches(0.7), Inches(0.5), SLIDE_W - Inches(1.4), Inches(1),
+                title_box = add_text(slide, Inches(0.7), Inches(0.5), SLIDE_W - Inches(1.4), Inches(1),
                          title, 32, t["accent"], bold=True)
-                text_width = Inches(6.4) if has_image else SLIDE_W - Inches(1.8)
+                if sd.get("underline", True):
+                    _add_title_underline(slide, title_box, t["accent"])
+                text_width = Inches(6.4) if has_image else SLIDE_W - Inches(1.8) if has_image else SLIDE_W - Inches(1.8)
                 body = slide.shapes.add_textbox(Inches(0.9), Inches(1.7),
                                                 text_width, SLIDE_H - Inches(2.2))
                 frame = body.text_frame
                 frame.word_wrap = True
-                for i, bullet in enumerate(bullets):
-                    para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
-                    para.space_after = Pt(14)
-                    run = para.add_run()
-                    run.text = f"•  {bullet}"
-                    run.font.size = Pt(22 if len(bullets) <= 4 else 18)
-                    run.font.name = t["font"]
-                    run.font.color.rgb = _rgb(t["text"])
+                if stats:
+                    body.height = int(SLIDE_H * 0.5)
+                _fill_bullets_box(body, bullets, 22 if len(bullets) <= 4 else 18)
+            if sd.get("frame"):
+                _add_frame(slide, prs,
+                           Inches(0.3), Inches(0.35), SLIDE_W - Inches(0.6), SLIDE_H - Inches(0.7),
+                           t["accent"])
+            if stats:
+                _add_stats_row(slide, prs, stats, t["accent"])
             if has_image:
                 slide.shapes.add_picture(str(image_path), Inches(7.5), Inches(1.7),
                                          width=Inches(5.2))
@@ -350,7 +439,7 @@ def _freeform_role(slide) -> str | None:
     return "title"  # крупный заголовок + короткий подзаголовок
 
 
-def _build_on_skeleton(prs, data: dict) -> bool:
+def _build_on_skeleton(prs, data: dict, t: dict) -> bool:
     """Наложить нашу структуру на слайды шаблона, сохранив их дизайн.
     Раскладка по позиции: ПЕРВЫЙ лист шаблона — титул, ПОСЛЕДНИЙ — финал
     (контакты), средние — контент. Каждая роль при нехватке клонируется.
@@ -391,9 +480,9 @@ def _build_on_skeleton(prs, data: dict) -> bool:
         else:  # content и section — средние листы
             base = take("content")
         if modes[id(base)] == "ph":
-            _retext_slide(prs, base, sd)
+            _retext_slide(prs, base, sd, t)
         else:
-            _retext_freeform(prs, base, sd)
+            _retext_freeform(prs, base, sd, t)
         ordered.append(base)
 
     # чужие слайды, не понадобившиеся ни под один наш, — удалить
@@ -404,20 +493,24 @@ def _build_on_skeleton(prs, data: dict) -> bool:
     return True
 
 
-def _retext_slide(prs, slide, sd: dict) -> None:
+def _retext_slide(prs, slide, sd: dict, t: dict) -> None:
     """Заменить текст в ПЛЕЙСХОЛДЕРАХ слайда шаблона (дизайн остаётся).
     Посторонний текст шаблона (не в плейсхолдерах) очищается."""
     kind = sd.get("kind", "content")
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
-    bullets = [str(b) for b in (sd.get("bullets") or [])] if kind == "content" else []
+    bullets = (sd.get("bullets") or []) if kind == "content" else []
+    stats = sd.get("stats") or []
+    accent = t.get("accent", DEFAULT_THEME["accent"])
     body = None
+    title_ph = None
     for ph in slide.placeholders:
         ptype = ph.placeholder_format.type
         if ptype in (PP_PLACEHOLDER.CENTER_TITLE, PP_PLACEHOLDER.TITLE):
             frame = ph.text_frame
             frame.clear()
             frame.paragraphs[0].text = title
+            title_ph = ph
         elif ptype == PP_PLACEHOLDER.SUBTITLE:
             frame = ph.text_frame
             frame.clear()
@@ -431,24 +524,35 @@ def _retext_slide(prs, slide, sd: dict) -> None:
         frame.word_wrap = True
         if image_path:
             body.width = int(prs.slide_width * 0.52)
-        for i, bullet in enumerate(bullets):
-            para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
-            para.text = bullet
-    _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+        if stats:
+            body.height = int(prs.slide_height * 0.34)
+        _fill_bullets_ph(frame, bullets)
     for shape in slide.shapes:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
             shape.text_frame.clear()
+    if title_ph is not None and kind == "content" and sd.get("underline", True):
+        _add_title_underline(slide, title_ph, accent)
+    if image_path:
+        _add_template_image(slide, prs, image_path)
+    if sd.get("frame"):
+        _add_frame(slide, prs,
+                   int(prs.slide_width * 0.025), int(prs.slide_height * 0.025),
+                   int(prs.slide_width * 0.95), int(prs.slide_height * 0.95), accent)
+    if stats:
+        _add_stats_row(slide, prs, stats, accent)
 
 
-def _retext_freeform(prs, slide, sd: dict) -> None:
+def _retext_freeform(prs, slide, sd: dict, t: dict) -> None:
     """То же для «дизайнерских» слайдов: текст живёт в обычных текстбоксах.
     Крупнейший текстбокс считаем заголовком, следующий — телом/подзаголовком.
     Форматирование ранов-прототипов сохраняем."""
     kind = sd.get("kind", "content")
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
-    bullets = [str(b) for b in (sd.get("bullets") or [])] if kind == "content" else []
+    bullets = (sd.get("bullets") or []) if kind == "content" else []
+    stats = sd.get("stats") or []
+    accent = t.get("accent", DEFAULT_THEME["accent"])
     image_path = _slide_image(sd)
     texts = _text_shapes(slide)
     if not texts:
@@ -458,15 +562,26 @@ def _retext_freeform(prs, slide, sd: dict) -> None:
 
     if kind == "content":
         _set_shape_lines(texts[0], [title])
-        if len(texts) > 1:
-            body = texts[1]
+        title_shape = texts[0]
+        body = texts[1] if len(texts) > 1 else None
+        if body is not None:
             _set_shape_lines(body, bullets)
             if image_path and body.width > int(prs.slide_width * 0.55):
                 body.width = int(prs.slide_width * 0.52)
+            if stats:
+                body.height = int(prs.slide_height * 0.30)
+            if sd.get("frame"):
+                _add_frame(slide, prs,
+                           int(prs.slide_width * 0.03), int(prs.slide_height * 0.20),
+                           int(prs.slide_width * 0.94), int(prs.slide_height * 0.72), accent)
+            if sd.get("underline", True):
+                _add_title_underline(slide, title_shape, accent)
             for sp in texts[2:]:
                 _set_shape_lines(sp, [])
+        if stats:
+            _add_stats_row(slide, prs, stats, accent)
         if image_path:
-            _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
+            _add_template_image(slide, prs, image_path)
         return
 
     # титул / финал / разделитель: крупный шейп <- заголовок (+ подзаголовок
@@ -480,6 +595,97 @@ def _retext_freeform(prs, slide, sd: dict) -> None:
         _add_template_image(slide, prs, image_path, 0.62, 0.40, 0.30)
 
 
+def _bullet_lines(bullets) -> list:
+    """Пункты -> [(текст, уровень)]: уровень 0 — пункт, 1 — подпункт."""
+    lines = []
+    for b in _plain_bullets(bullets):
+        lines.append((b["text"], 0))
+        for sub in b["sub"]:
+            lines.append((sub, 1))
+    return lines
+
+
+def _fill_bullets_ph(frame, bullets):
+    """Буллеты в плейсхолдере: подпункты через level=1 — стиль берётся из шаблона."""
+    lines = _bullet_lines(bullets)
+    if not lines:
+        return
+    for i, (text, level) in enumerate(lines):
+        para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
+        para.text = text
+        if level:
+            para.level = 1
+
+
+def _fill_bullets_box(body, bullets, base_size):
+    """Буллеты в обычном текстбоксе: подпункты — тире с отступом и мельче."""
+    lines = _bullet_lines(bullets)
+    if not lines:
+        return
+    body.text_frame.word_wrap = True
+    for i, (text, level) in enumerate(lines):
+        para = body.text_frame.paragraphs[0] if i == 0 else body.text_frame.add_paragraph()
+        para.text = ("      -  " if level else "*  ") + text
+        for run in para.runs:
+            run.font.size = Pt(int(base_size * (0.8 if level else 1)))
+
+
+def _add_frame(slide, prs, x, y, w, h, accent):
+    """Тонкая рамка акцентного цвета без заливки."""
+    box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                 int(x), int(y), int(w), int(h))
+    box.fill.background()
+    box.line.color.rgb = _rgb(accent)
+    box.line.width = Pt(1.5)
+    box.shadow.inherit = False
+    return box
+
+
+def _add_title_underline(slide, title_shape, accent):
+    """Короткая акцентная линейка под заголовком контентного слайда."""
+    bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE,
+                                 int(title_shape.left),
+                                 int(title_shape.top + title_shape.height),
+                                 Inches(1.3), Inches(0.045))
+    bar.fill.solid()
+    bar.fill.fore_color.rgb = _rgb(accent)
+    bar.line.fill.background()
+    bar.shadow.inherit = False
+
+
+def _add_stats_row(slide, prs, stats, accent):
+    """Ряд крупных цифр с подписями и акцентной чертой слева."""
+    sw, sh = prs.slide_width, prs.slide_height
+    n = max(len(stats), 1)
+    gap = int(sw * 0.02)
+    w = int((sw * 0.88 - gap * (n - 1)) / n)
+    x = int(sw * 0.05)
+    y = int(sh * 0.74)
+    h = int(sh * 0.18)
+    for st in stats:
+        bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y,
+                                     int(sw * 0.006), h)
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = _rgb(accent)
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+        value = slide.shapes.add_textbox(x + int(sw * 0.014), y,
+                                         w - int(sw * 0.02), int(h * 0.55))
+        para = value.text_frame.paragraphs[0]
+        run = para.add_run()
+        run.text = str(st.get("value", ""))
+        run.font.size = Pt(28)
+        run.font.bold = True
+        run.font.color.rgb = _rgb(accent)
+        cap = slide.shapes.add_textbox(x + int(sw * 0.014), y + int(h * 0.55),
+                                       w - int(sw * 0.02), int(h * 0.45))
+        cap.text_frame.word_wrap = True
+        cpara = cap.text_frame.paragraphs[0]
+        crun = cpara.add_run()
+        crun.text = str(st.get("caption", ""))
+        crun.font.size = Pt(11)
+        crun.font.color.rgb = _rgb("2B2B2B")
+        x += w + gap
 def _slide_image(sd: dict) -> Path | None:
     """Путь к картинке слайда из активов пользователя (или None)."""
     name = sd.get("image")
