@@ -624,20 +624,21 @@ def _rasterize_pdf(template: Path) -> list[Path]:
         old_png.unlink()
     zoom = 1600 / max(doc[0].rect.width, 1)
     for i, page in enumerate(doc):
-        # вырезаем ЧУЖОЙ текст страницы (наш будет поверх), заливая его цветом фона:
-        # цвет берём из углов страницы, иначе — белый
-        corner = _corner_color(page)
-        page_area = page.rect.width * page.rect.height
-        # чужие картинки (не фоновые: меньше 60% площади страницы) — тоже убрать
-        for img in page.get_images(full=True):
-            for rect in page.get_image_rects(img[0]):
-                if (rect.width * rect.height) / page_area < 0.6:
-                    page.add_redact_annot(fitz.Rect(rect) + (-2, -2, 2, 2), fill=corner)
-        for block in page.get_text("blocks"):
-            rect = fitz.Rect(block[:4]) + (-2, -2, 2, 2)
-            page.add_redact_annot(rect, fill=corner)
-        if page.get_text("blocks") or page.get_images():
-            try:  # заодно снести векторные плашки, полностью покрытые вырезкой
+        # вырезаем ЧУЖОЙ текст страницы (наш будет поверх). По спанам — точнее,
+        # чем по блокам: не остаются обрезки крупных букв
+        for span_rect in _span_rects(page):
+            page.add_redact_annot(span_rect, fill=_block_fill_color(page, span_rect))
+        if i == 0:
+            # титульная страница: сносим центральную полосу и правую часть шапки
+            # (там их заголовок/меню и декор), оставляем логотип слева сверху
+            r = page.rect
+            bg = _corner_color(page)
+            page.add_redact_annot(
+                fitz.Rect(0, r.height * 0.26, r.width, r.height * 0.90), fill=bg)
+            page.add_redact_annot(
+                fitz.Rect(r.width * 0.30, 0, r.width, r.height * 0.25), fill=bg)
+        if page.get_text() or page.get_images():
+            try:  # сносим и векторный декор, покрытый вырезкой (палки-буквы и т.п.)
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_REMOVE,
                                       graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED)
             except TypeError:
@@ -646,6 +647,30 @@ def _rasterize_pdf(template: Path) -> list[Path]:
             str(cache / f"p{i + 1}.png"))
     marker.write_text(str(pdf_mtime))
     return sorted(cache.glob("p*.png"))
+
+
+def _block_fill_color(page, rect) -> tuple:
+    """Цвет заливки вырезаемого блока: сэмплируем точки-кольцо вокруг блока
+    и берём поканальную медиану — так цветные плашки дизайна сохраняются."""
+    r = page.rect
+    pad = 6
+    cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+    pts = [(max(rect.x0 - pad, 0), cy), (min(rect.x1 + pad, r.width), cy),
+           (cx, max(rect.y0 - pad, 0)), (cx, min(rect.y1 + pad, r.height)),
+           (max(rect.x0 - pad, 0), max(rect.y0 - pad, 0)),
+           (min(rect.x1 + pad, r.width), min(rect.y1 + pad, r.height))]
+    samples = []
+    for x, y in pts:
+        try:
+            pix = page.get_pixmap(clip=fitz.Rect(x - 2, y - 2, x + 2, y + 2))
+            samples.append(pix.pixel(0, 0))
+        except Exception:
+            continue
+    if not samples:
+        return _corner_color(page)
+    n = len(samples)
+    med = tuple(sorted(s[i] for s in samples)[n // 2] for i in range(3))
+    return tuple(c / 255 for c in med)
 
 
 def _corner_color(page) -> tuple:
@@ -660,6 +685,44 @@ def _corner_color(page) -> tuple:
         return tuple(c / 255 for c in avg)
     except Exception:
         return (1, 1, 1)
+
+def _span_rects(page) -> list:
+    """Точные прямоугольники всех текстовых спанов страницы (для вырезки)."""
+    import fitz
+    rects = []
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                bbox = span.get("bbox")
+                if bbox and span.get("text", "").strip():
+                    rects.append(fitz.Rect(bbox) + (-1, -1, 1, 1))
+    return rects
+
+
+def _dominant_accent(page) -> tuple | None:
+    """Самый частый НАСЫЩЕННЫЙ цвет страницы (фирменный акцент, не фон/текст)."""
+    import fitz
+    try:
+        pix = page.get_pixmap(matrix=fitz.Matrix(0.12, 0.12))
+        counts: dict = {}
+        data = pix.samples
+        step = pix.n
+        w = pix.width
+        for y in range(0, pix.height, 2):
+            row = y * w * step
+            for x in range(0, w, 2):
+                off = row + x * step
+                r, g, b = data[off], data[off + 1], data[off + 2]
+                if max(r, g, b) - min(r, g, b) < 45:  # серые/белые/чёрные мимо
+                    continue
+                key = (r >> 4, g >> 4, b >> 4)
+                counts[key] = counts.get(key, 0) + 1
+        if not counts:
+            return None
+        key = max(counts, key=counts.get)
+        return ((key[0] << 4) / 255, (key[1] << 4) / 255, (key[2] << 4) / 255)
+    except Exception:
+        return None
 
 def _card(slide, prs, x_frac, y_frac, w_frac, h_frac, alpha_pct=88):
     """Полупрозрачная белая карточка — читаемый фон для текста поверх дизайна PDF."""
@@ -711,7 +774,14 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path) -> None:
     prs.slide_width = SLIDE_W
     prs.slide_height = Emu(int(SLIDE_W * aspect))
     sw, sh = prs.slide_width, prs.slide_height
-    title_color = t.get("accent", DEFAULT_THEME["accent"])
+    accent = _dominant_accent(fitz.open(str(template))[0])
+    if accent:
+        # антиалиасинг размывает цвет — затемняем, пока не станет достаточно тёмным
+        while sum(accent) / 3 > 0.62:
+            accent = tuple(c * 0.78 for c in accent)
+        title_color = "%02X%02X%02X" % tuple(int(c * 255) for c in accent)
+    else:
+        title_color = t.get("accent", DEFAULT_THEME["accent"])
     content_pages = pages[1:] or pages
     content_idx = 0
 
@@ -729,7 +799,7 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path) -> None:
         slide.shapes.add_picture(str(bg), 0, 0, width=sw, height=sh)
 
         if kind in ("title", "closing"):
-            _card(slide, prs, 0.14, 0.38, 0.72, 0.24, alpha_pct=90)
+            _card(slide, prs, 0.14, 0.38, 0.72, 0.24, alpha_pct=94)
             _pdf_text(slide, prs, title, 0.18, 0.43, 0.64, 32, title_color,
                       bold=True, align=PP_ALIGN.CENTER, h_frac=0.09)
             if subtitle:
@@ -740,7 +810,7 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path) -> None:
             _pdf_text(slide, prs, title, 0.18, 0.45, 0.64, 28, title_color,
                       bold=True, align=PP_ALIGN.CENTER, h_frac=0.08)
         else:
-            _card(slide, prs, 0.06, 0.20, 0.88, 0.72, alpha_pct=90)
+            _card(slide, prs, 0.05, 0.18, 0.90, 0.74, alpha_pct=95)
             _pdf_text(slide, prs, title, 0.10, 0.24, 0.80, 26, title_color,
                       bold=True, h_frac=0.08)
             body = slide.shapes.add_textbox(int(sw * 0.10), int(sh * 0.36),
