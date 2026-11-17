@@ -236,7 +236,11 @@ def _last_artifact_summary(messages: list[dict]) -> str | None:
                         (x.get("value", "") + " " + x.get("caption", "")).strip()
                         for x in st if isinstance(x, dict)) + "]") if st else ""
                     image_note = f" [картинка: {s['image']}]" if s.get("image") else ""
-                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note}{stats_note} — "
+                    cards = s.get("cards") or []
+                    cards_note = (" [карточки: " + "; ".join(
+                        (x.get("title", "") + " — " + x.get("text", "")).strip(" —")
+                        for x in cards if isinstance(x, dict)) + "]") if cards else ""
+                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note}{stats_note}{cards_note} — "
                                  + "; ".join(blines)[:300])
                 return "\n".join(lines)[:3000]
             text = _visible_text(args.get("html", ""))

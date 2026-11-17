@@ -152,6 +152,14 @@ def normalize_slide(slide: dict) -> dict:
             if v:
                 stats.append({"value": v, "caption": c})
     s["stats"] = stats
+    cards = []
+    for c in (s.get("cards") or [])[:4]:
+        if isinstance(c, dict):
+            ttl = str(c.get("title") or "").strip()[:60]
+            txt = str(c.get("text") or c.get("body") or "").strip()[:200]
+            if ttl or txt:
+                cards.append({"title": ttl, "text": txt})
+    s["cards"] = cards
     s["frame"] = bool(s.get("frame"))
     return s
 
@@ -175,7 +183,8 @@ def validate_presentation(data: dict) -> list[str]:
         if not slide.get("title"):
             issues.append(f"слайд {i}: нет title")
         bullets = _plain_bullets(slide.get("bullets"))
-        if kind == "content" and not bullets:
+        cards = slide.get("cards") or []
+        if kind == "content" and not bullets and not cards:
             got = ", ".join(sorted(slide.keys()))
             issues.append(
                 f"слайд {i}: content-слайд без буллетов "
@@ -196,6 +205,9 @@ def validate_presentation(data: dict) -> list[str]:
         total_lines = sum(1 + len(b["sub"]) for b in bullets)
         if total_lines > MAX_TOTAL_LINES:
             issues.append(f"слайд {i}: строк {total_lines} > {MAX_TOTAL_LINES} — раздели материал на два слайда")
+        cards = slide.get("cards") or []
+        if cards and (not isinstance(cards, list) or len(cards) < 2 or len(cards) > 4):
+            issues.append(f"слайд {i}: cards — список из 2-4 карточек (title/text)")
         stats = slide.get("stats") or []
         if not isinstance(stats, list) or len(stats) > MAX_STATS:
             issues.append(f"слайд {i}: stats — список до {MAX_STATS} блоков {{value, caption}}")
@@ -253,7 +265,18 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
             accent = theme_accent_from_template(template)
             if accent:
                 t["accent"] = accent
-        if _build_on_skeleton(prs, data, t):
+        # карта дизайна: фирменный шрифт + положение логотипа на листах
+        try:
+            analysis = _template_analysis(template)
+        except Exception as exc:
+            print(f"analysis of template failed: {exc}")
+            analysis = {}
+        if analysis.get("font") and not t.get("font"):
+            t["font"] = analysis["font"]
+        if _build_on_skeleton(prs, data, t,
+                              logo_title=analysis.get("logo_first"),
+                              logo_content=analysis.get("logo_content"),
+                              logo_last=analysis.get("logo_last")):
             prs.save(path)
             return
         # фолбэк: у шаблона нет слайдов с плейсхолдерами — собираем на лейаутах
@@ -439,7 +462,8 @@ def _freeform_role(slide) -> str | None:
     return "title"  # крупный заголовок + короткий подзаголовок
 
 
-def _build_on_skeleton(prs, data: dict, t: dict) -> bool:
+def _build_on_skeleton(prs, data: dict, t: dict,
+                       logo_title=None, logo_content=None, logo_last=None) -> bool:
     """Наложить нашу структуру на слайды шаблона, сохранив их дизайн.
     Раскладка по позиции: ПЕРВЫЙ лист шаблона — титул, ПОСЛЕДНИЙ — финал
     (контакты), средние — контент. Каждая роль при нехватке клонируется.
@@ -479,10 +503,12 @@ def _build_on_skeleton(prs, data: dict, t: dict) -> bool:
             base = take("closing")
         else:  # content и section — средние листы
             base = take("content")
+        logo = (logo_title if kind == "title"
+                else logo_last if kind == "closing" else logo_content)
         if modes[id(base)] == "ph":
-            _retext_slide(prs, base, sd, t)
+            _retext_slide(prs, base, sd, t, logo=logo)
         else:
-            _retext_freeform(prs, base, sd, t)
+            _retext_freeform(prs, base, sd, t, logo=logo)
         ordered.append(base)
 
     # чужие слайды, не понадобившиеся ни под один наш, — удалить
@@ -493,17 +519,19 @@ def _build_on_skeleton(prs, data: dict, t: dict) -> bool:
     return True
 
 
-def _retext_slide(prs, slide, sd: dict, t: dict) -> None:
+def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
     """Заменить текст в ПЛЕЙСХОЛДЕРАХ слайда шаблона (дизайн остаётся).
     Посторонний текст шаблона (не в плейсхолдерах) очищается."""
     kind = sd.get("kind", "content")
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
     bullets = (sd.get("bullets") or []) if kind == "content" else []
+    if sd.get("cards"):
+        bullets = []  # карточки заменяют пункты — иначе текст торчит из-под окошек
     stats = sd.get("stats") or []
     accent = t.get("accent", DEFAULT_THEME["accent"])
-    body = None
     title_ph = None
+    bodies = []  # object/body плейсхолдеры слайда (первый заполняем, остальные чистим)
     for ph in slide.placeholders:
         ptype = ph.placeholder_format.type
         if ptype in (PP_PLACEHOLDER.CENTER_TITLE, PP_PLACEHOLDER.TITLE):
@@ -516,7 +544,9 @@ def _retext_slide(prs, slide, sd: dict, t: dict) -> None:
             frame.clear()
             frame.paragraphs[0].text = subtitle or ("Контакты" if kind == "closing" else "")
         elif ptype in (PP_PLACEHOLDER.OBJECT, PP_PLACEHOLDER.BODY):
-            body = ph
+            bodies.append(ph)
+    body = bodies[0] if bodies else None
+    extra_bodies = bodies[1:]  # вторые object-плейсхолдеры — чужой текст
     image_path = _slide_image(sd)
     if body is not None:
         frame = body.text_frame
@@ -527,6 +557,10 @@ def _retext_slide(prs, slide, sd: dict, t: dict) -> None:
         if stats:
             body.height = int(prs.slide_height * 0.34)
         _fill_bullets_ph(frame, bullets)
+        if len(_bullet_lines(bullets)) >= 7:
+            _shrink_runs(body, 0.85)
+    for ph in extra_bodies:
+        ph.text_frame.clear()
     for shape in slide.shapes:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
@@ -540,10 +574,12 @@ def _retext_slide(prs, slide, sd: dict, t: dict) -> None:
                    int(prs.slide_width * 0.025), int(prs.slide_height * 0.025),
                    int(prs.slide_width * 0.95), int(prs.slide_height * 0.95), accent)
     if stats:
-        _add_stats_row(slide, prs, stats, accent)
+        _add_stats_row(slide, prs, stats, accent, font=t.get("font"), avoid=logo)
+    if sd.get("cards"):
+        _add_cards(slide, prs, sd["cards"], accent, font=t.get("font"), avoid=logo)
 
 
-def _retext_freeform(prs, slide, sd: dict, t: dict) -> None:
+def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
     """То же для «дизайнерских» слайдов: текст живёт в обычных текстбоксах.
     Крупнейший текстбокс считаем заголовком, следующий — телом/подзаголовком.
     Форматирование ранов-прототипов сохраняем."""
@@ -551,6 +587,8 @@ def _retext_freeform(prs, slide, sd: dict, t: dict) -> None:
     title = str(sd.get("title") or "")
     subtitle = str(sd.get("subtitle") or "")
     bullets = (sd.get("bullets") or []) if kind == "content" else []
+    if sd.get("cards"):
+        bullets = []  # карточки заменяют пункты
     stats = sd.get("stats") or []
     accent = t.get("accent", DEFAULT_THEME["accent"])
     image_path = _slide_image(sd)
@@ -566,6 +604,8 @@ def _retext_freeform(prs, slide, sd: dict, t: dict) -> None:
         body = texts[1] if len(texts) > 1 else None
         if body is not None:
             _set_shape_lines(body, bullets)
+            if len(_bullet_lines(bullets)) >= 7:
+                _shrink_runs(body, 0.85)
             if image_path and body.width > int(prs.slide_width * 0.55):
                 body.width = int(prs.slide_width * 0.52)
             if stats:
@@ -579,7 +619,9 @@ def _retext_freeform(prs, slide, sd: dict, t: dict) -> None:
             for sp in texts[2:]:
                 _set_shape_lines(sp, [])
         if stats:
-            _add_stats_row(slide, prs, stats, accent)
+            _add_stats_row(slide, prs, stats, accent, font=t.get("font"), avoid=logo)
+        if sd.get("cards"):
+            _add_cards(slide, prs, sd["cards"], accent, font=t.get("font"), avoid=logo)
         if image_path:
             _add_template_image(slide, prs, image_path)
         return
@@ -653,15 +695,17 @@ def _add_title_underline(slide, title_shape, accent):
     bar.shadow.inherit = False
 
 
-def _add_stats_row(slide, prs, stats, accent):
-    """Ряд крупных цифр с подписями и акцентной чертой слева."""
+def _add_stats_row(slide, prs, stats, accent, font=None, avoid=None):
+    """Ряд крупных цифр с подписями и акцентной чертой слева.
+    avoid — прямоугольник логотипа в долях страницы: ряд его не пересекает."""
     sw, sh = prs.slide_width, prs.slide_height
     n = max(len(stats), 1)
     gap = int(sw * 0.02)
-    w = int((sw * 0.88 - gap * (n - 1)) / n)
-    x = int(sw * 0.05)
-    y = int(sh * 0.74)
-    h = int(sh * 0.18)
+    fx, fy, fw, fh = _avoid_rect(0.05, 0.74, 0.88, 0.18, avoid)
+    x, y = int(sw * fx), int(sh * fy)
+    w, h = int(sw * fw), int(sh * fh)
+    w = int((w - gap * (n - 1)) / n)
+    font_name = font
     for st in stats:
         bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y,
                                      int(sw * 0.006), h)
@@ -677,6 +721,8 @@ def _add_stats_row(slide, prs, stats, accent):
         run.font.size = Pt(28)
         run.font.bold = True
         run.font.color.rgb = _rgb(accent)
+        if font_name:
+            run.font.name = font_name
         cap = slide.shapes.add_textbox(x + int(sw * 0.014), y + int(h * 0.55),
                                        w - int(sw * 0.02), int(h * 0.45))
         cap.text_frame.word_wrap = True
@@ -685,6 +731,8 @@ def _add_stats_row(slide, prs, stats, accent):
         crun.text = str(st.get("caption", ""))
         crun.font.size = Pt(11)
         crun.font.color.rgb = _rgb("2B2B2B")
+        if font_name:
+            crun.font.name = font_name
         x += w + gap
 def _slide_image(sd: dict) -> Path | None:
     """Путь к картинке слайда из активов пользователя (или None)."""
@@ -1089,3 +1137,196 @@ def _build_on_pdf(prs, data: dict, t: dict, template: Path,
                 run.text = "•  " + bullet
                 run.font.size = Pt(size)
                 run.font.color.rgb = _rgb("2B2B2B")
+
+
+def _shrink_runs(shape, factor):
+    """Уменьшить кегль всех ранов текстбокса (при плотном тексте)."""
+    for para in shape.text_frame.paragraphs:
+        for run in para.runs:
+            if run.font.size:
+                run.font.size = Pt(max(10, int(run.font.size.pt * factor)))
+
+
+def _avoid_rect(x, y, w, h, logo):
+    """Не пересекаться с логотипом: сдвиг правее или выше (доли страницы)."""
+    if not logo:
+        return x, y, w, h
+    lx0, ly0, lx1, ly1 = logo
+    if x + w <= lx0 or x >= lx1 or y + h <= ly0 or y >= ly1:
+        return x, y, w, h
+    if lx1 + 0.02 < 0.98:                       # вариант 1: правее лого
+        nx = lx1 + 0.02
+        return nx, y, max(0.2, 0.98 - nx), h
+    ny = max(0.05, ly0 - h - 0.02)              # вариант 2: выше лого
+    if ny + h <= ly0:
+        return x, ny, w, h
+    return x, y, w, h
+
+
+def _add_cards(slide, prs, cards, accent, font=None, avoid=None):
+    """«Окошки»: 2-4 карточки с заголовком и текстом (поле cards)."""
+    sw, sh = prs.slide_width, prs.slide_height
+    zx, zy, zw, zh = _avoid_rect(0.06, 0.30, 0.88, 0.48, avoid)
+    zone_x, zone_y = int(sw * zx), int(sh * zy)
+    zone_w, zone_h = int(sw * zw), int(sh * zh)
+    n = min(max(len(cards), 1), 4)
+    cols = 2 if n > 2 else n
+    rows = (n + cols - 1) // cols
+    gap = int(sw * 0.015)
+    cw = int((zone_w - gap * (cols - 1)) / cols)
+    ch = int((zone_h - gap * (rows - 1)) / rows)
+    for i, card in enumerate(cards[:4]):
+        cx = zone_x + (i % cols) * (cw + gap)
+        cy = zone_y + (i // cols) * (ch + gap)
+        box = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, cx, cy, cw, ch)
+        box.fill.solid()
+        box.fill.fore_color.rgb = _rgb("FFFFFF")
+        srgb = box.fill.fore_color._xFill.find(qn("a:srgbClr"))
+        alpha = srgb.makeelement(qn("a:alpha"), {"val": "92000"})
+        srgb.append(alpha)
+        box.line.color.rgb = _rgb(accent)
+        box.line.width = Pt(1.25)
+        box.shadow.inherit = False
+        tf = box.text_frame
+        tf.word_wrap = True
+        tf.margin_left = Emu(int(Inches(0.14)))
+        tf.margin_right = Emu(int(Inches(0.14)))
+        tf.margin_top = Emu(int(Inches(0.08)))
+        para = tf.paragraphs[0]
+        para.alignment = PP_ALIGN.LEFT
+        run = para.add_run()
+        run.text = str(card.get("title", ""))
+        run.font.size = Pt(15)
+        run.font.bold = True
+        run.font.color.rgb = _rgb(accent)
+        if font:
+            run.font.name = font
+        body_text = str(card.get("text", ""))
+        if body_text:
+            p2 = tf.add_paragraph()
+            p2.alignment = PP_ALIGN.LEFT
+            r2 = p2.add_run()
+            r2.text = body_text[:200]
+            r2.font.size = Pt(11)
+            r2.font.color.rgb = _rgb("2B2B2B")
+            if font:
+                r2.font.name = font
+
+
+def _template_font_pptx(prs) -> "str | None":
+    """Самый частый шрифт в текстах шаблона .pptx."""
+    counts: dict = {}
+    for s in prs.slides:
+        for sp in s.shapes:
+            if not sp.has_text_frame:
+                continue
+            for para in sp.text_frame.paragraphs:
+                for run in para.runs:
+                    if run.font.name:
+                        counts[run.font.name] = counts.get(run.font.name, 0) + 1
+    return max(counts, key=counts.get) if counts else None
+
+
+def _template_font_pdf(doc) -> "str | None":
+    """Самый частый шрифт по спанам PDF (семейство без начертания)."""
+    counts: dict = {}
+    for page in doc:
+        for b in page.get_text("dict").get("blocks", []):
+            for l in b.get("lines", []):
+                for sp in l.get("spans", []):
+                    name = sp.get("font")
+                    if name:
+                        counts[name] = counts.get(name, 0) + len(sp.get("text", ""))
+    if not counts:
+        return None
+    name = max(counts, key=counts.get)
+    for suf in ("-Bold", "-Regular", "-Light", "-Semibold", "-Medium",
+                " Bold", " Regular"):
+        if name.endswith(suf):
+            return name[: -len(suf)]
+    return name
+
+
+def _logo_rect(page) -> "tuple | None":
+    """Ищет логотип: компактный кластер пикселей, отличных от фона угла.
+    Возвращает доли страницы (x0, y0, x1, y1) или None."""
+    import fitz
+    r = page.rect
+    bg255 = tuple(c * 255 for c in (_corner_color(page) or (1, 1, 1)))
+    zones = ((0.03, 0.02, 0.32, 0.20), (0.68, 0.02, 0.97, 0.20),
+             (0.03, 0.74, 0.32, 0.97), (0.68, 0.74, 0.97, 0.97))
+    best = None
+    for fx0, fy0, fx1, fy1 in zones:
+        clip = fitz.Rect(r.width * fx0, r.height * fy0,
+                         r.width * fx1, r.height * fy1)
+        pix = page.get_pixmap(clip=clip, matrix=fitz.Matrix(0.3, 0.3))
+        w, h, n, data = pix.width, pix.height, pix.n, pix.samples
+        pts = []
+        for yy in range(h):
+            row = yy * w * n
+            for xx in range(w):
+                off = row + xx * n
+                dist = (abs(data[off] - bg255[0]) + abs(data[off + 1] - bg255[1])
+                        + abs(data[off + 2] - bg255[2]))
+                if dist > 130:
+                    pts.append((xx, yy))
+        frac = len(pts) / max(w * h, 1)
+        if len(pts) < 15 or frac > 0.45:
+            continue  # зона пустая или это крупный цветной элемент, не лого
+        xs = [q[0] for q in pts]
+        ys = [q[1] for q in pts]
+        rect = ((clip.x0 + min(xs) / w * clip.width) / r.width,
+                (clip.y0 + min(ys) / h * clip.height) / r.height,
+                (clip.x0 + max(xs) / w * clip.width) / r.width,
+                (clip.y0 + max(ys) / h * clip.height) / r.height)
+        bw = max(max(xs) - min(xs), 1)
+        bh = max(max(ys) - min(ys), 1)
+        if min(bw, bh) <= 6:
+            continue   # линии и прочий плоский декор — не лого
+        density = len(pts) / (bw * bh)   # лого — компактный плотный кластер
+        if density < 0.12:
+            continue
+        if best is None or density > best[1]:
+            best = (rect, density)
+    return best[0] if best else None
+
+
+def _pptx_to_pdf(template: Path, out_pdf: Path) -> None:
+    import subprocess
+    script = Path(__file__).resolve().parents[1] / "scripts" / "pptx2pdf.ps1"
+    subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-File",
+                    str(script), "-in", str(template.resolve()),
+                    "-out", str(out_pdf.resolve())],
+                   capture_output=True, timeout=180)
+
+
+def _template_analysis(template: Path) -> dict:
+    """Фирменный шрифт + положение логотипа на 1/контентном/последнем листе.
+    Кэш по mtime шаблона: data/templates/pdf_cache/<stem>-analysis/data.json."""
+    import json as _json
+    cache = template.parent / "pdf_cache" / f"{template.stem}-analysis"
+    cache.mkdir(parents=True, exist_ok=True)
+    marker = cache / "data.json"
+    mtime = template.stat().st_mtime
+    if marker.exists():
+        try:
+            d = _json.loads(marker.read_text(encoding="utf-8"))
+            if abs(float(d.get("mtime", 0)) - mtime) < 1:
+                return d
+        except Exception:
+            pass
+    if template.suffix.lower() == ".pdf":
+        pdf_path = template
+    else:
+        pdf_path = cache / "template.pdf"
+        if not pdf_path.exists():
+            _pptx_to_pdf(template, pdf_path)
+    import fitz
+    doc = fitz.open(str(pdf_path))
+    pages = list(doc)
+    out = {"mtime": mtime, "font": _template_font_pdf(doc),
+           "logo_first": _logo_rect(pages[0]) if pages else None,
+           "logo_content": _logo_rect(pages[1]) if len(pages) > 2 else None,
+           "logo_last": _logo_rect(pages[-1]) if len(pages) > 1 else None}
+    marker.write_text(_json.dumps(out, ensure_ascii=False), encoding="utf-8")
+    return out
