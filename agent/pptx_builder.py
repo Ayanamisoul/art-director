@@ -24,7 +24,7 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
@@ -205,6 +205,13 @@ def validate_presentation(data: dict) -> list[str]:
         total_lines = sum(1 + len(b["sub"]) for b in bullets)
         if total_lines > MAX_TOTAL_LINES:
             issues.append(f"слайд {i}: строк {total_lines} > {MAX_TOTAL_LINES} — раздели материал на два слайда")
+        vis = sum(_est_visual_lines(b["text"], 18, int(SLIDE_W * 0.66)) for b in bullets)
+        vis += sum(_est_visual_lines(s, 14, int(SLIDE_W * 0.58))
+                   for b in bullets for s in b["sub"])
+        if vis > 11:
+            issues.append(
+                f"слайд {i}: после переносов получится ~{vis} строк — текст не влезет; "
+                "сократи формулировки (пункты до ~60 символов) или раздели на два слайда")
         cards = slide.get("cards") or []
         if cards and (not isinstance(cards, list) or len(cards) < 2 or len(cards) > 4):
             issues.append(f"слайд {i}: cards — список из 2-4 карточек (title/text)")
@@ -400,7 +407,8 @@ def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,
                 frame.word_wrap = True
                 if stats:
                     body.height = int(SLIDE_H * 0.5)
-                _fill_bullets_box(body, bullets, 22 if len(bullets) <= 4 else 18)
+                _fill_bullets_box(body, bullets, 22 if len(bullets) <= 4 else 18,
+                                  height=body.height)
             if sd.get("frame"):
                 _add_frame(slide, prs,
                            Inches(0.3), Inches(0.35), SLIDE_W - Inches(0.6), SLIDE_H - Inches(0.7),
@@ -552,20 +560,21 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
         frame = body.text_frame
         frame.clear()
         frame.word_wrap = True
+        frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # PowerPoint сам подожмёт при необходимости
         if image_path:
             body.width = int(prs.slide_width * 0.52)
         if stats:
             body.height = int(prs.slide_height * 0.34)
-        _fill_bullets_ph(frame, bullets)
-        if len(_bullet_lines(bullets)) >= 7:
-            _shrink_runs(body, 0.85)
+        _fill_bullets_ph(frame, bullets, body.width, body.height,
+                         start_pt=_ph_font_pt(slide, body))
     for ph in extra_bodies:
         ph.text_frame.clear()
     for shape in slide.shapes:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
             shape.text_frame.clear()
-    if title_ph is not None and kind == "content" and sd.get("underline", True):
+    if title_ph is not None and kind == "content" and sd.get("underline", True) \
+            and _est_visual_lines(title, 36, title_ph.width) <= 1:
         _add_title_underline(slide, title_ph, accent)
     if image_path:
         _add_template_image(slide, prs, image_path)
@@ -603,9 +612,14 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
         title_shape = texts[0]
         body = texts[1] if len(texts) > 1 else None
         if body is not None:
-            _set_shape_lines(body, bullets)
-            if len(_bullet_lines(bullets)) >= 7:
-                _shrink_runs(body, 0.85)
+            if bullets:
+                _set_shape_lines(body, bullets)
+                proto_pt = _proto_font_pt(body)
+                pt, _f = _fit_bullets_pt(bullets, body.width, body.height,
+                                         start_pt=proto_pt or 20, min_pt=12)
+                if proto_pt and pt < proto_pt:
+                    _shrink_runs(body, pt / proto_pt)
+                body.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
             if image_path and body.width > int(prs.slide_width * 0.55):
                 body.width = int(prs.slide_width * 0.52)
             if stats:
@@ -614,7 +628,8 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
                 _add_frame(slide, prs,
                            int(prs.slide_width * 0.03), int(prs.slide_height * 0.20),
                            int(prs.slide_width * 0.94), int(prs.slide_height * 0.72), accent)
-            if sd.get("underline", True):
+            if sd.get("underline", True) \
+                    and _est_visual_lines(title, 36, title_shape.width) <= 1:
                 _add_title_underline(slide, title_shape, accent)
             for sp in texts[2:]:
                 _set_shape_lines(sp, [])
@@ -647,24 +662,92 @@ def _bullet_lines(bullets) -> list:
     return lines
 
 
-def _fill_bullets_ph(frame, bullets):
-    """Буллеты в плейсхолдере: подпункты через level=1 — стиль берётся из шаблона."""
+def _est_visual_lines(text, font_pt, width_emu, char_ratio=0.54):
+    """Оценка числа строк после переноса: средний символ ~0.54 кегля."""
+    import math
+    text = str(text or "")
+    if not text:
+        return 1
+    usable_pt = max(width_emu / 12700.0 - 16, 60)
+    cpl = max(int(usable_pt / (font_pt * char_ratio)), 8)
+    return max(math.ceil(len(text) / cpl), 1)
+
+
+def _fit_bullets_pt(bullets, width_emu, height_emu, start_pt=20, min_pt=12):
+    """Подобрать базовый кегль, чтобы оценённый объём (с переносами)
+    влез в бокс по высоте. Возвращает (кегль, влезает ли)."""
+    lines = _bullet_lines(bullets)
+    if not lines or not width_emu or not height_emu:
+        return start_pt, True
+    box_pt = height_emu / 12700.0
+    pt = start_pt
+    while True:
+        used = 0.0
+        for text, level in lines:
+            size = pt * (0.8 if level else 1.0)
+            used += _est_visual_lines(text, size, width_emu) * size * 1.22
+        used += 6 * (len(lines) - 1)          # интервалы между абзацами
+        if used <= box_pt or pt <= min_pt:
+            return pt, used <= box_pt
+        pt -= 1
+
+
+def _est_visual_lines(text, font_pt, width_emu, char_ratio=0.54):
+    """Оценка числа строк после переноса: средний символ ~0.54 кегля."""
+    import math
+    text = str(text or "")
+    if not text:
+        return 1
+    usable_pt = max(width_emu / 12700.0 - 16, 60)
+    cpl = max(int(usable_pt / (font_pt * char_ratio)), 8)
+    return max(math.ceil(len(text) / cpl), 1)
+
+
+def _fit_bullets_pt(bullets, width_emu, height_emu, start_pt=20, min_pt=12):
+    """Подобрать базовый кегль, чтобы оценённый объём (с переносами)
+    влез в бокс по высоте. Возвращает (кегль, влезает ли)."""
+    lines = _bullet_lines(bullets)
+    if not lines or not width_emu or not height_emu:
+        return start_pt, True
+    box_pt = height_emu / 12700.0
+    pt = start_pt
+    while True:
+        used = 0.0
+        for text, level in lines:
+            size = pt * (0.8 if level else 1.0)
+            used += _est_visual_lines(text, size, width_emu) * size * 1.22
+        used += 6 * (len(lines) - 1)          # интервалы между абзацами
+        if used <= box_pt or pt <= min_pt:
+            return pt, used <= box_pt
+        pt -= 1
+
+
+def _fill_bullets_ph(frame, bullets, width=None, height=None, start_pt=20):
+    """Буллеты в плейсхолдере: подпункты через level=1; кегль подобран
+    под оценённый объём текста (переносы учитываются)."""
     lines = _bullet_lines(bullets)
     if not lines:
         return
+    pt, _fits = _fit_bullets_pt(bullets, width, height, start_pt=start_pt, min_pt=12)
     for i, (text, level) in enumerate(lines):
         para = frame.paragraphs[0] if i == 0 else frame.add_paragraph()
         para.text = text
         if level:
             para.level = 1
+        for run in para.runs:
+            run.font.size = Pt(int(pt * (0.8 if level else 1.0)))
 
 
-def _fill_bullets_box(body, bullets, base_size):
-    """Буллеты в обычном текстбоксе: подпункты — тире с отступом и мельче."""
+def _fill_bullets_box(body, bullets, base_size, height=None):
+    """Буллеты в обычном текстбоксе: подпункты — тире с отступом и мельче;
+    кегль ужимается под оценённый объём."""
     lines = _bullet_lines(bullets)
     if not lines:
         return
     body.text_frame.word_wrap = True
+    if height:
+        base_size, _fits = _fit_bullets_pt(bullets, body.width, height,
+                                           start_pt=base_size, min_pt=11)
     for i, (text, level) in enumerate(lines):
         para = body.text_frame.paragraphs[0] if i == 0 else body.text_frame.add_paragraph()
         para.text = ("      -  " if level else "*  ") + text
@@ -1145,6 +1228,58 @@ def _shrink_runs(shape, factor):
         for run in para.runs:
             if run.font.size:
                 run.font.size = Pt(max(10, int(run.font.size.pt * factor)))
+
+
+def _proto_font_pt(shape):
+    """Кегль первого содержательного рана текстбокса (или None)."""
+    for para in shape.text_frame.paragraphs:
+        for run in para.runs:
+            if run.font.size:
+                return run.font.size.pt
+    return None
+
+
+def _ph_font_pt(slide, ph, default=20):
+    """Эффективный кегль плейсхолдера: layout-раны → lstStyle layout/мастера
+    → txStyles мастера (bodyStyle/titleStyle) → default."""
+    from pptx.oxml.ns import qn
+    idx = ph.placeholder_format.idx
+
+    def _from_txbody(holder_ph):
+        for para in holder_ph.text_frame.paragraphs:
+            for run in para.runs:
+                if run.font.size:
+                    return run.font.size.pt
+        ls = holder_ph.text_frame._txBody.find(qn("a:lstStyle"))
+        if ls is not None:
+            l1 = ls.find(qn("a:lvl1pPr"))
+            d = l1.find(qn("a:defRPr")) if l1 is not None else None
+            if d is not None and d.get("sz"):
+                return int(d.get("sz")) / 100.0
+        return None
+
+    for lph in slide.slide_layout.placeholders:
+        if lph.placeholder_format.idx == idx:
+            v = _from_txbody(lph)
+            if v:
+                return v
+    layout = slide.slide_layout
+    for holder in (layout, layout.slide_master):
+        for mph in holder.placeholders:
+            if mph.placeholder_format.idx == idx:
+                v = _from_txbody(mph)
+                if v:
+                    return v
+    tx = layout.slide_master._element.find(qn("p:txStyles"))
+    if tx is not None:
+        kind = "titleStyle" if ph.placeholder_format.type in (1, 13) else "bodyStyle"
+        st = tx.find(qn("p:" + kind))
+        if st is not None:
+            l1 = st.find(qn("a:lvl1pPr"))
+            d = l1.find(qn("a:defRPr")) if l1 is not None else None
+            if d is not None and d.get("sz"):
+                return int(d.get("sz")) / 100.0
+    return default
 
 
 def _avoid_rect(x, y, w, h, logo):
