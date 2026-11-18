@@ -75,6 +75,18 @@ def _plain_bullets(bullets) -> list:
     return out
 
 
+_NO_EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\u2600-\u27BF\uFE00-\uFE0F\u2B00-\u2BFF\u2049\u203C]+"
+)
+
+
+def _no_emoji(text: str) -> str:
+    """Вырезать эмодзи и декоративные символы, схлопнуть лишние пробелы."""
+    import re as _re
+    out = _NO_EMOJI_RE.sub(" ", str(text or ""))
+    return _re.sub(r"\s{2,}", " ", out).strip()
+
+
 def normalize_slide(slide: dict) -> dict:
     """Приводит слайд от модели к каноническому виду.
     kind: type/cover/bullets/... -> title|content|section|closing
@@ -82,6 +94,9 @@ def normalize_slide(slide: dict) -> dict:
     s = dict(slide)
     kind = str(s.get("kind") or s.get("type") or "content").lower()
     s["kind"] = _KIND_ALIASES.get(kind, kind)
+    s["title"] = _no_emoji(str(s.get("title") or "")).strip()
+    if s.get("subtitle") is not None:
+        s["subtitle"] = _no_emoji(str(s.get("subtitle") or "")).strip()
     bullets = None
     for key in _BULLET_ALIASES:
         if s.get(key):
@@ -97,14 +112,14 @@ def normalize_slide(slide: dict) -> dict:
         bullets = lines
     # нормализация пунктов: режем по строкам, снимаем нумерацию/маркеры
     # («1.», «•», «-»), в т.ч. внутри уже разбитых пунктов ("пункт\n2. пункт")
+    strip_re = re.compile(r"^\s*(?:\d+[.)]\s*|[-•*–]\s+)")
     cleaned = []
     for b in bullets or []:
         for ln in str(b).splitlines():
-            ln = re.sub(r"^\s*(?:\d+[.)]\s*|[-•*–]\s+)", "", ln.strip()).strip()
+            ln = _no_emoji(strip_re.sub("", ln.strip()).strip())
             if ln:
                 cleaned.append(ln)
     s["bullets"] = cleaned
-    strip_re = re.compile(r"^\s*(?:\d+[.)]\s*|[-•*–]\s+)")
     raw = bullets or []
     # если модель прислала словари с подпунктами ({"text": ..., "sub": [...]}) —
     # сохраняем структуру; иначе работаем со строками
@@ -112,16 +127,16 @@ def normalize_slide(slide: dict) -> dict:
         items = []
         for b in raw:
             if isinstance(b, dict):
-                text = strip_re.sub("", str(b.get("text") or b.get("title") or "").strip()).strip()
+                text = _no_emoji(strip_re.sub("", str(b.get("text") or b.get("title") or "").strip()).strip())
                 if not text:
                     continue
-                subs = [strip_re.sub("", str(x).strip())
+                subs = [_no_emoji(strip_re.sub("", str(x).strip()))
                         for x in (b.get("sub") or b.get("items") or [])][:MAX_SUB]
                 subs = [x[:MAX_SUB_LEN] for x in subs if x]
                 items.append({"text": text[:MAX_BULLET_LEN], "sub": subs})
             else:
                 for ln in str(b).splitlines():
-                    ln = strip_re.sub("", ln.strip()).strip()
+                    ln = _no_emoji(strip_re.sub("", ln.strip()).strip())
                     if ln:
                         items.append({"text": ln[:MAX_BULLET_LEN], "sub": []})
         s["bullets"] = items
@@ -143,24 +158,28 @@ def normalize_slide(slide: dict) -> dict:
                 stats.append({"value": v, "caption": c})
     s["stats"] = stats
     s["frame"] = bool(s.get("frame"))
-    # блоки с крупными цифрами: {"value": "100%", "caption": "..."}
     stats = []
     for st in (s.get("stats") or [])[:MAX_STATS]:
         if isinstance(st, dict):
-            v = str(st.get("value") or st.get("number") or "").strip()[:14]
-            c = str(st.get("caption") or st.get("label") or "").strip()[:80]
+            v = _no_emoji(str(st.get("value") or st.get("number") or "")).strip()[:14]
+            c = _no_emoji(str(st.get("caption") or st.get("label") or "")).strip()[:80]
             if v:
                 stats.append({"value": v, "caption": c})
     s["stats"] = stats
     cards = []
     for c in (s.get("cards") or [])[:4]:
         if isinstance(c, dict):
-            ttl = str(c.get("title") or "").strip()[:60]
-            txt = str(c.get("text") or c.get("body") or "").strip()[:200]
+            ttl = _no_emoji(str(c.get("title") or "")).strip()[:60]
+            txt = _no_emoji(str(c.get("text") or c.get("body") or "")).strip()[:200]
             if ttl or txt:
                 cards.append({"title": ttl, "text": txt})
     s["cards"] = cards
     s["frame"] = bool(s.get("frame"))
+    fs = s.get("font_size") or s.get("body_size") or s.get("font")
+    try:
+        s["font_size"] = min(40, max(12, int(fs)))
+    except (TypeError, ValueError):
+        s.pop("font_size", None)
     return s
 
 
@@ -212,6 +231,9 @@ def validate_presentation(data: dict) -> list[str]:
             issues.append(
                 f"слайд {i}: после переносов получится ~{vis} строк — текст не влезет; "
                 "сократи формулировки (пункты до ~60 символов) или раздели на два слайда")
+        if slide.get("font_size") is not None and \
+                not isinstance(slide.get("font_size"), int):
+            issues.append(f"слайд {i}: font_size — целое число 12-40")
         cards = slide.get("cards") or []
         if cards and (not isinstance(cards, list) or len(cards) < 2 or len(cards) > 4):
             issues.append(f"слайд {i}: cards — список из 2-4 карточек (title/text)")
@@ -407,7 +429,7 @@ def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,
                 frame.word_wrap = True
                 if stats:
                     body.height = int(SLIDE_H * 0.5)
-                _fill_bullets_box(body, bullets, 22 if len(bullets) <= 4 else 18,
+                _fill_bullets_box(body, bullets, sd.get("font_size") or (22 if len(bullets) <= 4 else 18),
                                   height=body.height)
             if sd.get("frame"):
                 _add_frame(slide, prs,
@@ -566,7 +588,7 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
         if stats:
             body.height = int(prs.slide_height * 0.34)
         _fill_bullets_ph(frame, bullets, body.width, body.height,
-                         start_pt=_ph_font_pt(slide, body))
+                         start_pt=sd.get("font_size") or _ph_font_pt(slide, body))
     for ph in extra_bodies:
         ph.text_frame.clear()
     for shape in slide.shapes:
@@ -614,7 +636,7 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
         if body is not None:
             if bullets:
                 _set_shape_lines(body, bullets)
-                proto_pt = _proto_font_pt(body)
+                proto_pt = sd.get("font_size") or _proto_font_pt(body)
                 pt, _f = _fit_bullets_pt(bullets, body.width, body.height,
                                          start_pt=proto_pt or 20, min_pt=12)
                 if proto_pt and pt < proto_pt:
