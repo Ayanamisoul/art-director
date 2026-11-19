@@ -540,10 +540,11 @@ def _build_on_skeleton(prs, data: dict, t: dict,
             base = take("content")
         logo = (logo_title if kind == "title"
                 else logo_last if kind == "closing" else logo_content)
+        img_left = _tpl_image_left(base, prs)
         if modes[id(base)] == "ph":
-            _retext_slide(prs, base, sd, t, logo=logo)
+            _retext_slide(prs, base, sd, t, logo=logo, img_left=img_left)
         else:
-            _retext_freeform(prs, base, sd, t, logo=logo)
+            _retext_freeform(prs, base, sd, t, logo=logo, img_left=img_left)
         ordered.append(base)
 
     # чужие слайды, не понадобившиеся ни под один наш, — удалить
@@ -564,6 +565,62 @@ def _has_title_decor(slide, prs):
         except (TypeError, ValueError):
             continue
     return False
+
+
+def _remove_shape(sh) -> None:
+    sh._element.getparent().remove(sh._element)
+
+
+def _empty_pic_placeholders(slide) -> list:
+    """Пустые picture-плейсхолдеры шаблона (рамки без картинки) — мусор."""
+    out = []
+    for sh in slide.shapes:
+        if not sh.is_placeholder:
+            continue
+        try:
+            if sh.placeholder_format.type != PP_PLACEHOLDER.PICTURE:
+                continue
+        except (TypeError, ValueError):
+            continue
+        try:
+            sh.image
+            continue          # картинка есть — не трогаем
+        except Exception:
+            out.append(sh)
+    return out
+
+
+def _tpl_image_left(slide, prs):
+    """Левая граница (доли ширины) самой правой картинки шаблона на слайде,
+    чтобы текст её не перекрывал. None — картинок нет."""
+    left = None
+    for sh in slide.shapes:
+        is_pic = sh.shape_type in (MSO_SHAPE_TYPE.PICTURE, MSO_SHAPE_TYPE.LINKED_PICTURE)
+        if not is_pic and sh.is_placeholder:
+            try:
+                is_pic = sh.placeholder_format.type == PP_PLACEHOLDER.PICTURE
+            except (TypeError, ValueError):
+                is_pic = False
+        if not is_pic:
+            continue
+        try:
+            sh.image
+        except Exception:
+            continue          # пустой плейсхолдер
+        l = (sh.left or 0) / max(prs.slide_width, 1)
+        if left is None or l > left:
+            left = l
+    return left
+
+
+def _shrink_body_to(prs, body, obstacle_left) -> None:
+    """Сузить текстовый бокс так, чтобы его правый край не доходил до
+    obstacle_left (доли ширины) на 0.03. Не сжимает ниже 30% слайда."""
+    if body is None or body.left is None or obstacle_left is None:
+        return
+    limit = int(prs.slide_width * (obstacle_left - 0.03)) - body.left
+    if limit < body.width and limit >= int(prs.slide_width * 0.3):
+        body.width = limit
 
 
 def _fit_ph_text(prs, ph, start_pt, min_pt):
@@ -588,7 +645,7 @@ def _fit_ph_text(prs, ph, start_pt, min_pt):
                 run.font.size = Pt(int(pt))
 
 
-def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
+def _retext_slide(prs, slide, sd: dict, t: dict, logo=None, img_left=None) -> None:
     """Заменить текст в ПЛЕЙСХОЛДЕРАХ слайда шаблона (дизайн остаётся).
     Посторонний текст шаблона (не в плейсхолдерах) очищается."""
     kind = sd.get("kind", "content")
@@ -623,13 +680,17 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
         frame.word_wrap = True
         frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE  # PowerPoint сам подожмёт при необходимости
         if image_path:
-            body.width = int(prs.slide_width * 0.52)
+            _shrink_body_to(prs, body, 0.55)      # наша картинка встанет на 0.55
+        if img_left is not None:
+            _shrink_body_to(prs, body, img_left)  # картинка из шаблона
         if stats:
             body.height = int(prs.slide_height * 0.34)
         _fill_bullets_ph(frame, bullets, body.width, body.height,
                          start_pt=sd.get("font_size") or _ph_font_pt(slide, body))
     for ph in extra_bodies:
         ph.text_frame.clear()
+    for sh in _empty_pic_placeholders(slide):
+        _remove_shape(sh)          # пустые рамки-плейсхолдеры шаблона
     for shape in slide.shapes:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
@@ -648,7 +709,12 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
             and _est_visual_lines(title, _ph_font_pt(slide, title_ph), title_ph.width) <= 1:
         _add_title_underline(slide, title_ph, accent)
     if image_path:
-        _add_template_image(slide, prs, image_path)
+        x = 0.55
+        w = 0.40
+        if img_left is not None and img_left + 0.02 > x:
+            x = min(img_left + 0.02, 0.60)
+            w = max(0.2, min(w, 0.95 - x))
+        _add_template_image(slide, prs, image_path, x, 0.25, w)
     if sd.get("frame"):
         _add_frame(slide, prs,
                    int(prs.slide_width * 0.025), int(prs.slide_height * 0.025),
@@ -659,7 +725,7 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
         _add_cards(slide, prs, sd["cards"], accent, font=t.get("font"), avoid=logo)
 
 
-def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
+def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None, img_left=None) -> None:
     """То же для «дизайнерских» слайдов: текст живёт в обычных текстбоксах.
     Крупнейший текстбокс считаем заголовком, следующий — телом/подзаголовком.
     Форматирование ранов-прототипов сохраняем."""
@@ -672,6 +738,8 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
     stats = sd.get("stats") or []
     accent = t.get("accent", DEFAULT_THEME["accent"])
     image_path = _slide_image(sd)
+    for sh in _empty_pic_placeholders(slide):
+        _remove_shape(sh)          # пустые рамки-плейсхолдеры шаблона
     texts = _text_shapes(slide)
     if not texts:
         if image_path:
@@ -691,8 +759,10 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
                 if proto_pt and pt < proto_pt:
                     _shrink_runs(body, pt / proto_pt)
                 body.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
-            if image_path and body.width > int(prs.slide_width * 0.55):
-                body.width = int(prs.slide_width * 0.52)
+            if image_path:
+                _shrink_body_to(prs, body, 0.55)
+            if img_left is not None:
+                _shrink_body_to(prs, body, img_left)
             if stats:
                 body.height = int(prs.slide_height * 0.30)
             if sd.get("frame"):
