@@ -60,7 +60,7 @@
   <span class="spacer"></span>
   <span id="status"></span>
   <button onclick="save()">Сохранить и пересобрать PPTX</button>
-  <button onclick="exportPdf()">📄 Сохранить в PDF</button>
+  <button onclick="exportPdf()"> Сохранить в PDF</button>
 </header>
 <div class="layout">
   <div class="slides-col">
@@ -112,7 +112,7 @@ function renderEditor() {
       <div class="row"><span class="num">${i + 1}</span>
         <select>${Object.entries(KINDS).map(([k, v]) =>
           `<option value="${k}" ${s.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        <button class="del" title="Удалить">✕</button></div>
+        <button class="del" title="Удалить"></button></div>
       <input class="t" placeholder="Заголовок слайда" value="${(s.title || '').replace(/"/g, '&quot;')}">
       ${isTitleLike
         ? `<input class="s" placeholder="Подзаголовок" value="${(s.subtitle || '').replace(/"/g, '&quot;')}">`
@@ -164,13 +164,13 @@ function bt(b) { return typeof b === 'string' ? b : (b && b.text ? b.text : '');
 
 async function exportPdf() {
   const btn = event.target;
-  btn.textContent = '⏳ Готовлю PDF…';
+  btn.textContent = 'Готовлю PDF…';
   try {
     const r = await fetch('/api/presentation/' + encodeURIComponent(name) + '/pdf', { method: 'POST' });
     const res = await r.json();
-    if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); btn.textContent = '📄 Сохранить в PDF'; }
-    else { btn.textContent = '❌ ' + (res.detail || 'ошибка'); }
-  } catch (err) { btn.textContent = '❌ ' + err; }
+    if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); btn.textContent = 'Сохранить в PDF'; }
+    else { btn.textContent = ' ' + (res.detail || 'ошибка'); }
+  } catch (err) { btn.textContent = ' ' + err; }
 }
 
 async function save() {

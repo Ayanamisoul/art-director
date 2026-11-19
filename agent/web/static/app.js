@@ -13,13 +13,13 @@ function addMsg(role, text, tools, validation, saved) {
   if (validation && validation.issues && validation.issues.length) {
     const v = document.createElement('div');
     v.className = 'tools';
-    v.textContent = (validation.ok ? '✅ проверено судьёй' : '⚠ судья: ' + validation.issues.join('; '));
+    v.textContent = (validation.ok ? 'проверено судьёй' : 'судья: ' + validation.issues.join('; '));
     div.appendChild(v);
   }
   if (tools && tools.length) {
     const det = document.createElement('details');
     det.className = 'tools';
-    det.innerHTML = '<summary>⚙ вызовы инструментов: ' + tools.length + '</summary>';
+    det.innerHTML = '<summary> вызовы инструментов: ' + tools.length + '</summary>';
     const pre = document.createElement('pre');
     pre.textContent = tools.join('\n');
     det.appendChild(pre);
@@ -84,21 +84,21 @@ async function renderSlidesPreview(container, name) {
   const btn = document.createElement('a');
   btn.className = 'big-edit-btn';
   btn.href = '/editor/' + encodeURIComponent(name);
-  btn.textContent = '✏️ Открыть в редакторе';
+  btn.textContent = 'Открыть в редакторе';
   container.appendChild(btn);
   const pdf = document.createElement('a');
   pdf.className = 'pdf-btn';
   pdf.href = '#';
-  pdf.textContent = '📄 Скачать PDF';
+  pdf.textContent = 'Скачать PDF';
   pdf.onclick = async (e) => {
     e.preventDefault();
-    pdf.textContent = '⏳ Готовлю PDF…';
+    pdf.textContent = 'Готовлю PDF…';
     try {
       const r = await fetch('/api/presentation/' + encodeURIComponent(name) + '/pdf', { method: 'POST' });
       const res = await r.json();
-      if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); pdf.textContent = '📄 Скачать PDF'; }
-      else { pdf.textContent = '❌ ' + (res.detail || 'ошибка'); }
-    } catch (err) { pdf.textContent = '❌ ' + err; }
+      if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); pdf.textContent = 'Скачать PDF'; }
+      else { pdf.textContent = ' ' + (res.detail || 'ошибка'); }
+    } catch (err) { pdf.textContent = ' ' + err; }
   };
   container.appendChild(pdf);
 }
@@ -126,11 +126,11 @@ async function refreshFiles() {
       const edit = document.createElement('a');
       edit.className = 'edit-btn';
       edit.href = '/editor/' + encodeURIComponent(base);
-      edit.textContent = '✏️ Редактировать';
+      edit.textContent = 'Редактировать';
       filesEl.appendChild(edit);
       const chat = document.createElement('a');
       chat.className = 'chat-btn';
-      chat.textContent = '💬 чат';
+      chat.textContent = 'чат';
       chat.onclick = () => goChat(base);
       filesEl.appendChild(chat);
     }
@@ -142,8 +142,8 @@ function setPresentation(name) {
   const bar = document.getElementById('focusbar');
   if (!name) { bar.className = ''; bar.innerHTML = ''; return; }
   bar.className = 'on';
-  bar.innerHTML = '💬 Правим презентацию: <b>' + esc(name) + '</b>' +
-    '<a href="/editor/' + encodeURIComponent(name) + '">✏️ открыть в редакторе</a>';
+  bar.innerHTML = ' Правим презентацию: <b>' + esc(name) + '</b>' +
+    '<a href="/editor/' + encodeURIComponent(name) + '">открыть в редакторе</a>';
   input.placeholder = 'Например: поменяй заголовок второго слайда на «…» или добавь слайд про цены';
 }
 
@@ -157,7 +157,7 @@ async function goChat(name) {
   location.href = '/?session=' + encodeURIComponent(data.id);
 }
 
-// --- восстановление чата по ссылке ?session=<id> (кнопка «💬 чат» в панели) ---
+// --- восстановление чата по ссылке ?session=<id> (кнопка « чат» в панели) ---
 const restoreId = new URLSearchParams(location.search).get('session');
 if (restoreId) restoreSession(restoreId);
 
@@ -277,20 +277,20 @@ async function uploadOne(file) {
     note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg) и шаблоны .pptx`, true);
     return;
   }
-  const pill = note(`⏳ Загружаю «${file.name}» как ${kind.label}…`);
+  const pill = note(` Загружаю «${file.name}» как ${kind.label}…`);
   const fd = new FormData();
   fd.append('file', file);
   try {
     const r = await fetch(kind.url, { method: 'POST', body: fd });
     const res = await r.json();
     if (res.ok) {
-      pill.textContent = `✅ «${res.name}» — ${kind.label} загружен. Агент видит файл через ${kind.url === '/api/assets' ? 'list_images' : 'list_templates'}.`;
+      pill.textContent = ` «${res.name}» — ${kind.label} загружен. Агент видит файл через ${kind.url === '/api/assets' ? 'list_images' : 'list_templates'}.`;
     } else {
-      pill.textContent = `❌ «${file.name}» не загружен: ${res.detail || 'ошибка сервера'}`;
+      pill.textContent = ` «${file.name}» не загружен: ${res.detail || 'ошибка сервера'}`;
       pill.classList.add('err');
     }
   } catch (err) {
-    pill.textContent = `❌ «${file.name}» не загружен: ${err}`;
+    pill.textContent = ` «${file.name}» не загружен: ${err}`;
     pill.classList.add('err');
   }
   refreshFiles();
@@ -365,7 +365,7 @@ async function refreshChats() {
     const del = document.createElement('button');
     del.className = 'del';
     del.title = 'Удалить чат';
-    del.textContent = '🗑';
+    del.textContent = '×';
     del.onclick = async () => {
       if (!confirm('Удалить этот чат? История пропадёт (файлы презентаций останутся).')) return;
       await fetch('/api/session/' + encodeURIComponent(s.id), { method: 'DELETE' });
@@ -397,7 +397,7 @@ async function refreshAssets() {
     const del = document.createElement('button');
     del.className = 'del';
     del.title = 'Удалить картинку';
-    del.textContent = '🗑';
+    del.textContent = '×';
     del.onclick = async () => {
       if (!confirm('Удалить картинку «' + name + '»? Из слайдов она не пропадёт — только из активов.')) return;
       await fetch('/api/assets/' + encodeURIComponent(name), { method: 'DELETE' });

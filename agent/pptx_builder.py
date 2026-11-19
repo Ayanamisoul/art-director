@@ -23,7 +23,7 @@ from pathlib import Path
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE, PP_PLACEHOLDER
+from pptx.enum.shapes import MSO_SHAPE, MSO_SHAPE_TYPE, PP_PLACEHOLDER
 from pptx.enum.text import MSO_AUTO_SIZE, PP_ALIGN
 from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
@@ -201,6 +201,11 @@ def validate_presentation(data: dict) -> list[str]:
             issues.append(f"слайд {i}: неизвестный kind «{kind}» (есть: {', '.join(sorted(kinds))})")
         if not slide.get("title"):
             issues.append(f"слайд {i}: нет title")
+        if kind in ("title", "closing"):
+            if len(slide.get("title") or "") > 70:
+                issues.append(f"слайд {i}: заголовок титула длиннее 70 символов — сократи")
+            if len(slide.get("subtitle") or "") > 90:
+                issues.append(f"слайд {i}: подзаголовок длиннее 90 символов — сократи")
         bullets = _plain_bullets(slide.get("bullets"))
         cards = slide.get("cards") or []
         if kind == "content" and not bullets and not cards:
@@ -549,6 +554,40 @@ def _build_on_skeleton(prs, data: dict, t: dict,
     return True
 
 
+def _has_title_decor(slide, prs):
+    """У шаблона своё оформление зоны заголовка (линии в верхней трети)?"""
+    limit = int(prs.slide_height * 0.35)
+    for sh in slide.shapes:
+        try:
+            if sh.shape_type == MSO_SHAPE_TYPE.LINE and (sh.top or 0) < limit:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _fit_ph_text(prs, ph, start_pt, min_pt):
+    """Титульные плейсхолдеры: правый край не дальше 95% слайда, перенос
+    включён, кегль подобран под реальную ширину/высоту бокса."""
+    if ph.left is None or ph.width is None:
+        return
+    ph.text_frame.word_wrap = True
+    right_edge = int(prs.slide_width * 0.95)
+    if ph.left + ph.width > right_edge:
+        ph.width = max(int(prs.slide_width * 0.4), right_edge - ph.left)
+    text = ph.text_frame.text
+    if not text:
+        return
+    pt = start_pt
+    box_pt = max((ph.height or 0) / 12700.0, 30)
+    while pt > min_pt and _est_visual_lines(text, pt, ph.width) * pt * 1.18 > box_pt:
+        pt -= 1
+    if pt != start_pt:
+        for para in ph.text_frame.paragraphs:
+            for run in para.runs:
+                run.font.size = Pt(int(pt))
+
+
 def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
     """Заменить текст в ПЛЕЙСХОЛДЕРАХ слайда шаблона (дизайн остаётся).
     Посторонний текст шаблона (не в плейсхолдерах) очищается."""
@@ -595,8 +634,18 @@ def _retext_slide(prs, slide, sd: dict, t: dict, logo=None) -> None:
         if shape.has_text_frame and not shape.is_placeholder \
                 and shape.text_frame.text.strip():
             shape.text_frame.clear()
+    if kind in ("title", "closing"):
+        # титульные листы: геометрия и кегль подгониаются под шаблон
+        for ph in slide.placeholders:
+            ptype = ph.placeholder_format.type
+            if ptype in (PP_PLACEHOLDER.CENTER_TITLE, PP_PLACEHOLDER.TITLE,
+                         PP_PLACEHOLDER.SUBTITLE, PP_PLACEHOLDER.BODY,
+                         PP_PLACEHOLDER.OBJECT):
+                _fit_ph_text(prs, ph, _ph_font_pt(slide, ph),
+                             min_pt=14 if ptype == PP_PLACEHOLDER.SUBTITLE else 24)
     if title_ph is not None and kind == "content" and sd.get("underline", True) \
-            and _est_visual_lines(title, 36, title_ph.width) <= 1:
+            and not _has_title_decor(slide, prs) \
+            and _est_visual_lines(title, _ph_font_pt(slide, title_ph), title_ph.width) <= 1:
         _add_title_underline(slide, title_ph, accent)
     if image_path:
         _add_template_image(slide, prs, image_path)
@@ -651,7 +700,9 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
                            int(prs.slide_width * 0.03), int(prs.slide_height * 0.20),
                            int(prs.slide_width * 0.94), int(prs.slide_height * 0.72), accent)
             if sd.get("underline", True) \
-                    and _est_visual_lines(title, 36, title_shape.width) <= 1:
+                    and not _has_title_decor(slide, prs) \
+                    and _est_visual_lines(title, _proto_font_pt(title_shape) or 36,
+                                          title_shape.width) <= 1:
                 _add_title_underline(slide, title_shape, accent)
             for sp in texts[2:]:
                 _set_shape_lines(sp, [])
@@ -668,6 +719,18 @@ def _retext_freeform(prs, slide, sd: dict, t: dict, logo=None) -> None:
     note = subtitle or ("Контакты" if kind == "closing" else "")
     lines = [title] + ([note] if note else [])
     _set_shape_lines(texts[0], lines)
+    if kind in ("title", "closing"):
+        box = texts[0]
+        box.text_frame.word_wrap = True          # иначе текст уезжает за край
+        if box.left is not None and box.width is not None:
+            # нормальная ширина титульной зоны (узкие колонки шаблона не читаются)
+            target_w = int(prs.slide_width * 0.85) - box.left
+            if box.width < target_w:
+                box.width = target_w
+            right_edge = int(prs.slide_width * 0.9)
+            if box.left + box.width > right_edge:
+                box.width = right_edge - box.left
+        box.text_frame.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
     for sp in texts[1:]:
         _set_shape_lines(sp, [])
     if image_path:
