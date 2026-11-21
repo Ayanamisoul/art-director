@@ -30,14 +30,22 @@ MAX_TOOL_ROUNDS = 5  # защита от бесконечного цикла в�
 
 
 async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox,
-                      log: list[str] | None = None) -> str:
+                      log: list[str] | None = None, *, output_format: str = "",
+                      selections: dict | None = None) -> str:
     """Один полный ход агента: модель + при необходимости инструменты.
     В log (если передан) пишутся строки вида «вызван save_html(...)» —
     их веб-клиент показывает пользователю."""
-    tools = toolbox.openai_tools()
+    # Встроенный чат создаёт лендинги через проверенный локальный макет.
+    # save_html остаётся доступен внешним MCP-клиентам для их готового HTML.
+    excluded = {"save_html"}
+    if output_format == "presentation":
+        excluded.update({"save_landing", "get_landing", "html_to_pdf"})
+    elif output_format == "landing":
+        excluded.update({"save_presentation", "get_presentation", "read_template", "list_templates"})
+    tools = [tool for tool in toolbox.openai_tools() if tool["function"]["name"] not in excluded]
     for _ in range(MAX_TOOL_ROUNDS):
-        message = complete(backend["base_url"], backend["api_key"], backend["model"],
-                           messages, tools=tools)
+        message = await asyncio.to_thread(complete, backend["base_url"], backend["api_key"],
+                                          backend["model"], messages, tools=tools)
         messages.append(message)  # важно: с tool_calls, чтобы модель видела свои вызовы
 
         if not message.get("tool_calls"):
@@ -49,6 +57,9 @@ async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox,
                 args = json.loads(call["function"]["arguments"] or "{}")
             except json.JSONDecodeError:
                 args = {}
+            if selections and name in selections:
+                args.update(selections[name])
+                call["function"]["arguments"] = json.dumps(args, ensure_ascii=False)
             short_args = {k: (v[:60] + "…" if isinstance(v, str) and len(v) > 60 else v)
                           for k, v in args.items()}
             line = f"{name}({short_args})"
@@ -56,7 +67,8 @@ async def agent_reply(backend: dict, messages: list[dict], toolbox: MCPToolbox,
             if log is not None:
                 log.append(line)
             try:
-                result = await toolbox.call(name, args)
+                result = ("Выбери инструмент из доступных для текущего формата."
+                          if name in excluded else await toolbox.call(name, args))
             except Exception as exc:
                 result = f"ошибка инструмента: {exc}"
             print(f"  [tool] -> {result[:400]}")

@@ -17,7 +17,7 @@ PREVIEW_DIR = ROOT / "data" / "artifacts" / "previews"
 PREVIEW_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def render_pptx_previews(pptx_path: Path, max_slides: int = 10,
+def render_pptx_previews(pptx_path: Path, max_slides: int | None = None,
                          dpi: int = 72) -> int | None:
     """Сохранить превью-картинки слайдов. Возвращает число картинок или None."""
     try:
@@ -44,7 +44,7 @@ def render_pptx_previews(pptx_path: Path, max_slides: int = 10,
             out_dir.mkdir(parents=True, exist_ok=True)
             for old in out_dir.glob("p*.png"):
                 old.unlink()
-            count = min(max_slides, len(doc))
+            count = len(doc) if max_slides is None else min(max_slides, len(doc))
             for i in range(count):
                 doc[i].get_pixmap(dpi=dpi).save(str(out_dir / f"p{i + 1}.png"))
             doc.close()

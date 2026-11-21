@@ -6,9 +6,8 @@ cd agent && py -m uvicorn web:app --port 8000  →  http://localhost:8000
 HTTP-роутеры — в routers/. Здесь только чат-цикл агента (ему нужны toolbox
 и judge) и монтирование статики.
 """
-import json
+import asyncio
 import sys
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -19,15 +18,16 @@ except Exception:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import BACKENDS, DEFAULT_BACKEND
+from config import BACKENDS
 from core import sessions as core_sessions
 from core import templates as core_templates
-from core.artifacts import DATA_DIR
+from core.artifacts import DATA_DIR, saved_results
+from core.landings import PROFILES
 from core.assets import ASSETS_DIR
 from core.previews import PREVIEW_DIR
 from judge import semantic_check
@@ -65,6 +65,7 @@ app.include_router(assets_router.router)
 app.include_router(files_router.router)
 
 core_sessions.load_all()
+_active_chats: set[str] = set()
 
 
 class ChatRequest(BaseModel):
@@ -73,12 +74,18 @@ class ChatRequest(BaseModel):
     backend: str | None = None      # ollama | xkiro | zai — переключатель из UI
     template: str | None = None     # шаблон, выбранный пользователем в UI
     output_format: str | None = None  # presentation | landing | None = решает модель
+    landing_profile: str | None = None
     template_images: str | None = None  # remove = чекбокс «без фото из шаблона»
 
 
 @app.get("/")
 async def index():
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.get("/api/landing/profiles")
+async def landing_profiles():
+    return {"profiles": PROFILES}
 
 
 @app.get("/editor/{name}")
@@ -90,62 +97,61 @@ def _system_prompt(state: dict) -> str:
     """Скилл + текущая обстановка: файлы пользователя и фокус сессии.
     Пересобирается каждый ход — модель всегда видит актуальные списки."""
     from core.assets import text_list as assets_text
-    from core.artifacts import DATA_DIR as ARTIFACTS
-    from core.templates import TEMPLATES_DIR, preferred
 
-    templates = sorted(TEMPLATES_DIR.glob("*.ppt*"), key=lambda p: p.stat().st_mtime) \
-        + sorted(TEMPLATES_DIR.glob("*.pdf"), key=lambda p: p.stat().st_mtime)
-    templates.sort(key=lambda p: p.stat().st_mtime)
-    images = [p.name for p in ASSETS_DIR.iterdir() if p.is_file()]
-    decks = sorted(p.stem for p in ARTIFACTS.glob("*.pptx"))
-    lines = [SKILLS.get(state.get("skill", "chat"), SKILLS["chat"]),
-             "", "ФАЙЛЫ ПОЛЬЗОВАТЕЛЯ НА ЭТОЙ МАШИНЕ (актуально на сейчас):"]
-    if templates:
-        lines.append("- Шаблоны (свежий — последний): "
-                     + ", ".join(p.name for p in templates)
-                     + "\n  СОЗДАВАЙ ПРЕЗЕНТАЦИИ ПО САМОМУ СВЕЖЕМУ ШАБЛОНУ (template=...), "
-                       "если пользователь не попросил другой стиль или без шаблона.")
-    else:
-        lines.append("- Шаблонов нет. Если пользователь просит «по моему шаблону» — "
-                     "попроси загрузить .pptx или .pdf в панели файлов.")
-    if images:
-        lines.append("- " + assets_text().replace("\n", "\n  "))
-    if decks:
-        lines.append("- Сохранённые презентации: " + ", ".join(decks)
-                     + "\n  Для правок: get_presentation(имя) -> изменить нужные слайды -> "
-                       "save_presentation с тем же именем.")
-    if state.get("presentation"):
-        lines.append(f"- ФОКУС ЭТОЙ СЕССИИ: презентация «{state['presentation']}» — "
-                     f"пользователь обсуждает и правит её. Правки сохраняй с этим же именем.")
-    chosen = state.get("chosen_template")
-    if chosen:
-        lines.append(f"- ПОЛЬЗОВАТЕЛЬ ВЫБРАЛ ШАБЛОН: «{chosen}» — во ВСЕХ вызовах save_presentation "
-                     f"передавай template=«{chosen}», даже если пользователь в тексте не повторяет.")
-    if state.get("chosen_template_images"):
-        lines.append("- ШАБЛОН БЕЗ ФОТО: пользователь выключил чужие картинки — во всех "
-                     "save_presentation по PDF-шаблону передавай template_images=\"remove\".")
+    lines = [SKILLS.get(state.get("skill"), SKILLS["chat"])]
     fmt = state.get("chosen_format")
-    if fmt == "presentation":
-        lines.append("- ФОРМАТ РЕЗУЛЬТАТА — ТОЛЬКО ПРЕЗЕНТАЦИЯ: сохраняй через save_presentation "
-                     "(.pptx со слайдами). save_html и лендинги НЕ ИСПОЛЬЗОВАТЬ, даже если "
-                     "запрос звучит как справочник — делай слайды.")
-    elif fmt == "landing":
-        lines.append("- ФОРМАТ РЕЗУЛЬТАТА — ТОЛЬКО ЛЕНДИНГ: сохраняй через save_html "
-                     "(одностраничный HTML). save_presentation НЕ ИСПОЛЬЗОВАТЬ.")
+    if fmt != "landing":
+        lines.append(core_templates.text_list())
+        chosen = state.get("chosen_template")
+        if chosen == "__none__":
+            lines.append("Собирай презентацию без шаблона.")
+        elif chosen:
+            lines.append(f"Выбран шаблон «{chosen}». Его оформление применяется при сборке.")
+        if state.get("presentation"):
+            lines.append(f"Фокус чата — презентация «{state['presentation']}». Прочитай её перед правкой.")
+    if fmt != "presentation":
+        if state.get("chosen_landing_profile"):
+            lines.append(f"Стиль лендинга выбран в интерфейсе: {state['chosen_landing_profile']}.")
+        if state.get("landing"):
+            lines.append(f"Последний лендинг — «{state['landing']}». Для правки вызови get_landing.")
+    if any(ASSETS_DIR.iterdir()):
+        lines.append(assets_text())
+    if fmt in ("presentation", "landing"):
+        lines.append("Пользователь выбрал формат " + ("презентации." if fmt == "presentation" else "лендинга."))
     return "\n".join(lines)
 
 
 @app.post("/api/chat")
 async def chat_endpoint(req: ChatRequest):
     state = core_sessions.ensure(req.session_id)
+    session_id = state["id"]
+    if session_id in _active_chats:
+        raise HTTPException(409, "Подождите завершения предыдущего сообщения в этом чате.")
+    _active_chats.add(session_id)
+    try:
+        return await _chat_turn(req, state)
+    finally:
+        _active_chats.discard(session_id)
+
+
+async def _chat_turn(req: ChatRequest, state: dict):
+    fmt = state.get("chosen_format") if req.output_format is None else req.output_format
+    chosen = state.get("chosen_template", "") if req.template is None else req.template
+    profile = state.get("chosen_landing_profile", "") if req.landing_profile is None else req.landing_profile
+    if fmt != "landing" and chosen and chosen != "__none__" and chosen not in core_templates.list_names():
+        raise HTTPException(400, f"Шаблон «{chosen}» недоступен. Выберите другой шаблон.")
+    if fmt != "presentation" and profile and profile not in PROFILES:
+        raise HTTPException(400, "Неизвестный стиль лендинга")
     if req.backend in BACKENDS:
         state["backend"] = req.backend
     if req.template is not None:
         state["chosen_template"] = req.template  # пустая строка = «авто»
     if req.output_format is not None:
         state["chosen_format"] = req.output_format  # пустая строка = решает модель
-    if req.template_images is not None and req.template_images:
+    if req.template_images is not None:
         state["chosen_template_images"] = req.template_images
+    if req.landing_profile is not None:
+        state["chosen_landing_profile"] = req.landing_profile
 
     # системный промпт пересобираем каждый ход: актуальные файлы + фокус сессии
     system = _system_prompt(state)
@@ -157,47 +163,60 @@ async def chat_endpoint(req: ChatRequest):
 
     tool_log: list[str] = []
     backend = BACKENDS[state["backend"]]
-    # выбор шаблона пользователем важнее догадок модели — фиксируем на каждый ход
-    core_templates.set_preferred(state.get("chosen_template")
-                                 or core_templates.newest())
+    # В «Авто» постоянный профиль задаёт сборщик. Явная ссылка или название
+    # образца в брифе меняет его и без переключения выпадающего списка.
+    if not profile:
+        brief = req.message.casefold()
+        for key, host in (("glavbuh", "about.1gl.ru/ai"), ("school", "school.law.ru/neyro"),
+                          ("law", "neyro-law.ru")):
+            if host in brief or PROFILES[key].casefold() in brief:
+                profile = key
+                break
+    if not chosen:
+        chosen = next((name for name in core_templates.list_names()
+                       if name.casefold() in req.message.casefold()), "")
+    selections = {"save_presentation": {"template": chosen or "__auto__"},
+                  "save_landing": {"profile": profile or ""}}
+    if chosen and chosen != "__none__":
+        selections["read_template"] = {"name": chosen}
+    if req.template_images is not None or state.get("chosen_template_images"):
+        selections["save_presentation"]["template_images"] = state.get("chosen_template_images") or "auto"
+    start = len(state["messages"]) - 1
+    async def reply():
+        return await agent_reply(backend, state["messages"], toolbox, log=tool_log,
+                                 output_format=state.get("chosen_format", ""), selections=selections)
+
     try:
-        answer = await agent_reply(backend, state["messages"], toolbox, log=tool_log)
+        answer = await reply()
     except Exception as exc:
-        state["messages"].pop()
+        del state["messages"][start:]
         core_sessions.save(state)
         return {"session_id": state["id"], "error": str(exc), "tools": tool_log}
 
     # --- семантическая валидация: судья сверяет результат с запросом ---
     validation = {"ok": True, "issues": []}
-    artifact = _last_artifact_summary(state["messages"])
+    artifact = _last_artifact_summary(saved_results(state["messages"][start:]))
     if artifact:
-        validation = semantic_check(backend, req.message, artifact)
+        validation = await asyncio.to_thread(semantic_check, backend, req.message, artifact)
         if not validation["ok"]:
             feedback = ("Проверка качества нашла несоответствия запросу:\n- "
                         + "\n- ".join(validation["issues"])
                         + "\nИсправь: пересоздай результат инструментами с учётом замечаний.")
             state["messages"].append({"role": "user", "content": feedback})
             try:
-                answer = await agent_reply(backend, state["messages"], toolbox, log=tool_log)
+                answer = await reply()
             except Exception as exc:
                 answer = f"(ошибка при исправлении: {exc})"
-            artifact2 = _last_artifact_summary(state["messages"])
-            validation = semantic_check(backend, req.message, artifact2) if artifact2 else validation
+            artifact2 = _last_artifact_summary(saved_results(state["messages"][start:]))
+            if artifact2:
+                validation = await asyncio.to_thread(semantic_check, backend, req.message, artifact2)
 
     # --- что сохранили: для мгновенного предпросмотра в чате ---
-    saved = {"presentation": None, "html": None}
-    for message in state["messages"]:
-        if message.get("role") != "tool":
-            continue
-        content = message.get("content") or ""
-        m = re.search(r"Презентация сохранена и прошла проверку: .+?([^\\/()\s]+)\.pptx", content)
-        if m:
-            saved["presentation"] = m.group(1)
-        m = re.search(r"Сохранено и прошло проверку: .+?([^\\/()\s]+)\.html", content)
-        if m:
-            saved["html"] = m.group(1)
-    if saved["presentation"] and not state.get("presentation"):
+    saved = saved_results(state["messages"][start:])
+    if saved["presentation"]:
         state["presentation"] = saved["presentation"]
+    if saved["html"]:
+        state["landing"] = saved["html"]
     core_sessions.save(state)
 
     return {"session_id": state["id"], "answer": answer, "tools": tool_log,
@@ -205,44 +224,31 @@ async def chat_endpoint(req: ChatRequest):
             "presentation": state.get("presentation")}
 
 
-def _last_artifact_summary(messages: list[dict]) -> str | None:
-    """Содержимое последнего сохранённого артефакта — для судьи."""
+def _last_artifact_summary(saved: dict) -> str | None:
+    """Судья читает сохранённый результат текущего хода."""
+    from pptx import Presentation
+    from pptx_builder import template_text_shapes
+    from core.decks import pptx_path, read_presentation
+    from core.artifacts import read_landing
     from validation import _visible_text
-    for message in reversed(messages):
-        for call in (message.get("tool_calls") or []):
-            fname = call.get("function", {}).get("name", "")
-            if fname not in ("save_presentation", "save_html"):
-                continue
-            try:
-                args = json.loads(call["function"].get("arguments") or "{}")
-            except json.JSONDecodeError:
-                continue
-            if fname == "save_presentation":
-                lines = [f"Презентация «{args.get('title', '')}» / {args.get('subtitle', '')}"]
-                if args.get("template"):
-                    lines.append(f"Использован шаблон: {args['template']}")
-                if args.get("accent_color"):
-                    lines.append(f"Акцентный цвет: {args['accent_color']}")
-                for s in args.get("slides", []):
-                    blines = []
-                    for b in s.get("bullets") or []:
-                        if isinstance(b, dict):
-                            blines.append(str(b.get("text") or ""))
-                            blines += ["  - " + str(x) for x in (b.get("sub") or [])]
-                        else:
-                            blines.append(str(b))
-                    st = s.get("stats") or []
-                    stats_note = (" [цифры: " + ", ".join(
-                        (x.get("value", "") + " " + x.get("caption", "")).strip()
-                        for x in st if isinstance(x, dict)) + "]") if st else ""
-                    image_note = f" [картинка: {s['image']}]" if s.get("image") else ""
-                    cards = s.get("cards") or []
-                    cards_note = (" [карточки: " + "; ".join(
-                        (x.get("title", "") + " — " + x.get("text", "")).strip(" —")
-                        for x in cards if isinstance(x, dict)) + "]") if cards else ""
-                    lines.append(f"Слайд ({s.get('kind', 'content')}): {s.get('title', '')}{image_note}{stats_note}{cards_note} — "
-                                 + "; ".join(blines)[:300])
-                return "\n".join(lines)[:3000]
-            text = _visible_text(args.get("html", ""))
-            return "Лендинг, видимый текст:\n" + " ".join(text.split())[:2000]
+
+    if saved["presentation"]:
+        name = saved["presentation"]
+        deck = Presentation(pptx_path(name))
+        theme = (read_presentation(name) or {}).get("theme", {})
+        lines = [f"Файл {name}.pptx сохранён, {len(deck.slides)} слайдов. "
+                 f"Шаблон: {theme.get('template', 'базовый')}."]
+        for i, slide in enumerate(deck.slides, 1):
+            text = [s.text for s in template_text_shapes(slide.shapes)]
+            for shape in slide.shapes:
+                if shape.has_table:
+                    text.extend(" | ".join(cell.text for cell in row.cells) for row in shape.table.rows)
+            lines.append(f"{i}. " + " ".join(text)[:450])
+        return "\n".join(lines)[:5000]
+    if saved["html"]:
+        name = saved["html"]
+        brief = read_landing(name) or {}
+        html = (DATA_DIR / f"{name}.html").read_text(encoding="utf-8")
+        return (f"Файл {name}.html сохранён, стиль {brief.get('profile', '')}. "
+                + " ".join(_visible_text(html).split())[:3500])
     return None

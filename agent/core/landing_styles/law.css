@@ -1,0 +1,30 @@
+:root { --ink: #151515; --ground: white; --font: ui-sans-serif, system-ui, sans-serif; --width: 1170px; }
+header, footer { color: white; background: #282828; }
+.bar { min-height: 60px; }
+.wordmark { font-size: 19px; }
+.desktop-links a { font-weight: 300; }
+.hero-inner { padding-block: clamp(94px, 13vw, 188px) clamp(90px, 10vw, 150px); text-align: center; }
+.law-title { display: flex; align-items: center; justify-content: center; gap: clamp(18px, 2.5vw, 40px); }
+h1 { max-width: 22ch; text-align: left; font-size: clamp(40px, 4.5vw, 64px); line-height: 1.02; font-weight: 800; letter-spacing: -.045em; }
+.mark { position: relative; flex: 0 0 auto; width: clamp(50px, 6.7vw, 93px); aspect-ratio: 1; overflow: hidden; }
+.mark::before, .mark::after { content: ""; position: absolute; width: 54%; height: 76%; background: #985bd1; }
+.mark::before { bottom: 0; left: 0; border-radius: 100% 0 0 0; }
+.mark::after { top: 0; right: 0; border-radius: 0 0 100% 0; }
+.law-title .hero-media { width: min(22vw, 220px); flex: 0 0 auto; }
+.law-title .hero-media img { max-height: 190px; }
+.lead { margin: 35px auto 0; max-width: 82ch; font-size: clamp(18px, 1.45vw, 21px); line-height: 1.44; }
+.button { min-height: 57px; margin-top: 43px; padding-inline: 40px; font-size: 20px; color: white; background: #9966e8; border-radius: 40px; }
+.chapter:nth-of-type(even) { color: white; background: #262626; --line: #555; }
+.chapter:nth-of-type(odd) { background: #efefef; --line: #ccc; }
+.chapter-inner { display: grid; grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); gap: 9%; }
+.chapter h2 { font-weight: 730; }
+.items { border-top: 1px solid var(--line); }
+.items li { padding: 19px 0; border-bottom: 1px solid var(--line); }
+@media (max-width: 740px) {
+  .hero-inner { padding-block: 60px 72px; }
+  .law-title { flex-direction: column; }
+  .law-title h1 { text-align: center; }
+  .law-title .hero-media { width: min(50vw, 190px); }
+  .hero .lead { margin-top: 24px; }
+  .chapter-inner { grid-template-columns: 1fr; gap: 26px; }
+}

@@ -17,7 +17,7 @@
   .msg .tools { margin-top: 8px; font-size: 12px; color: #9a8f83; }
   .msg .tools summary { cursor: pointer; }
   .composer { display: flex; gap: 12px; padding: 16px 24px; border-top: 1px solid #2c2620; }
-  .composer input { flex: 1; padding: 12px 16px; border-radius: 10px; border: 1px solid #3a322b; background: var(--panel); color: var(--text); font-size: 15px; }
+  .composer textarea { flex: 1; padding: 12px 16px; border-radius: 10px; border: 1px solid #3a322b; background: var(--panel); color: var(--text); font-size: 15px; }
   .composer button { padding: 12px 24px; border: none; border-radius: 10px; background: var(--accent); color: #14110f; font-weight: bold; cursor: pointer; }
   .composer button:disabled { opacity: .5; cursor: wait; }
   .tplrow { display: flex; align-items: center; gap: 8px; padding: 10px 24px 0; font-size: 12px; color: #9a8f83; flex-wrap: wrap; }
@@ -82,8 +82,19 @@ html, body { overflow: hidden; height: 100%; }
 aside { height: 100vh; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #3a322b transparent; }
 aside::-webkit-scrollbar { width: 8px; }
 aside::-webkit-scrollbar-thumb { background: #3a322b; border-radius: 4px; }
-a.pdf-btn { display: inline-block; margin: 8px 0 0 8px; padding: 8px 18px; background: var(--panel); border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; }
-a.pdf-btn:hover { background: var(--accent); color: #14110f; }
+.pdf-btn { display: inline-block; margin: 8px 0 0 8px; padding: 8px 18px; background: var(--panel); border: 1px solid var(--accent); color: var(--accent); border-radius: 8px; font-size: 13px; font-weight: bold; cursor: pointer; }
+.pdf-btn:hover { background: var(--accent); color: #14110f; }
+.tplrow label:not([hidden]) { display: inline-flex; align-items: center; gap: 6px; }
+.tplrow [hidden] { display: none; }
+.composer textarea { min-width: 0; font-family: inherit; line-height: 1.35; resize: vertical; max-height: 30vh; }
+@media (max-width: 740px) {
+  html, body { overflow: auto; }
+  .layout { display: block; height: auto; }
+  .chat { height: 80dvh; min-height: 420px; }
+  .tplrow, .composer { padding: 8px 12px; }
+  .tplrow select { max-width: 55vw; }
+  aside { height: auto; border-top: 1px solid #3a322b; }
+}
 .asset-item { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .asset-item img { width: 42px; height: 30px; object-fit: cover; border-radius: 4px; }
 .asset-item span { flex: 1; font-size: 12px; color: var(--text); word-break: break-all; }

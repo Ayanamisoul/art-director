@@ -5,6 +5,12 @@ const filesEl = document.getElementById('files');
 const form = document.getElementById('form');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
+input.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    if (!sendBtn.disabled) form.requestSubmit();
+  }
+});
 
 function addMsg(role, text, tools, validation, saved) {
   const div = document.createElement('div');
@@ -37,8 +43,6 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s || 
 async function renderSlidesPreview(container, name) {
   const r = await fetch('/api/presentation/' + encodeURIComponent(name));
   if (!r.ok) return;
-  const data = await r.json();
-  const accent = '#' + ((data.theme && data.theme.accent) || '2E5E4E');
   const wrap = document.createElement('div');
   wrap.className = 'pv-wrap';
   // настоящие рендеры слайдов (если готовы) вместо CSS-схемы — они показывают
@@ -50,7 +54,8 @@ async function renderSlidesPreview(container, name) {
       const img = document.createElement('img');
       img.className = 'pv-shot';
       img.loading = 'lazy';
-      img.src = '/previews/' + encodeURIComponent(name) + '/p' + i + '.png';
+      img.src = '/previews/' + encodeURIComponent(name) + '/p' + i + '.png?v=' + encodeURIComponent(pv.version || '');
+      img.alt = 'Слайд ' + i;
       wrap.appendChild(img);
     }
     const src = document.createElement('span');
@@ -58,27 +63,9 @@ async function renderSlidesPreview(container, name) {
     src.textContent = 'рендер из файла .pptx';
     wrap.appendChild(src);
   } else {
-    data.slides.forEach(s => {
-      const d = document.createElement('div');
-      if (s.kind === 'title' || s.kind === 'closing') {
-        d.className = 'pv-slide pv-title-slide';
-        d.style.background = '#1A2E28';
-        d.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
-      } else if (s.kind === 'section') {
-        d.className = 'pv-slide pv-section';
-        d.style.background = accent;
-        d.innerHTML = `<h2>${esc(s.title)}</h2>`;
-      } else {
-        const dense = (s.bullets || []).length > 4;
-        const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
-          <ul>${(s.bullets || []).map(b => `<li>${esc(b)}</li>`).join('')}</ul>`;
-        d.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
-        d.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
-          ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
-          : text);
-      }
-      wrap.appendChild(d);
-    });
+    const notice = document.createElement('p');
+    notice.textContent = 'Предпросмотр слайдов недоступен. Откройте файл в PowerPoint.';
+    wrap.appendChild(notice);
   }
   container.appendChild(wrap);
   const btn = document.createElement('a');
@@ -86,28 +73,51 @@ async function renderSlidesPreview(container, name) {
   btn.href = '/editor/' + encodeURIComponent(name);
   btn.textContent = 'Открыть в редакторе';
   container.appendChild(btn);
-  const pdf = document.createElement('a');
-  pdf.className = 'pdf-btn';
-  pdf.href = '#';
-  pdf.textContent = 'Скачать PDF';
-  pdf.onclick = async (e) => {
-    e.preventDefault();
-    pdf.textContent = 'Готовлю PDF…';
+  addPdfLink(container, 'presentation', name);
+}
+
+function addPdfLink(container, format, name) {
+  const button = document.createElement('button');
+  button.className = 'pdf-btn';
+  button.type = 'button';
+  button.textContent = 'Скачать PDF';
+  button.onclick = async () => {
+    button.disabled = true;
+    button.textContent = 'Готовлю PDF…';
     try {
-      const r = await fetch('/api/presentation/' + encodeURIComponent(name) + '/pdf', { method: 'POST' });
-      const res = await r.json();
-      if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); pdf.textContent = 'Скачать PDF'; }
-      else { pdf.textContent = ' ' + (res.detail || 'ошибка'); }
-    } catch (err) { pdf.textContent = ' ' + err; }
+      const response = await fetch('/api/' + format + '/' + encodeURIComponent(name) + '/pdf', {method: 'POST'});
+      const result = await response.json();
+      if (!response.ok || !result.ok) throw new Error(result.detail || 'Ошибка экспорта');
+      const link = document.createElement('a');
+      link.href = result.file;
+      link.download = name + '.pdf';
+      link.click();
+      button.textContent = 'Скачать PDF';
+    } catch (err) {
+      button.textContent = 'Повторить экспорт PDF';
+      note(String(err.message || err), true);
+    } finally {
+      button.disabled = false;
+    }
   };
-  container.appendChild(pdf);
+  container.appendChild(button);
 }
 
 function renderHtmlPreview(container, name) {
   const f = document.createElement('iframe');
   f.className = 'landing-pv';
+  f.title = 'Предпросмотр лендинга';
+  f.setAttribute('sandbox', '');
   f.src = '/files/' + encodeURIComponent(name) + '.html';
   container.appendChild(f);
+  const link = document.createElement('a');
+  link.className = 'big-edit-btn';
+  link.href = f.src;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'Открыть лендинг';
+  container.appendChild(link);
+  addPdfLink(container, 'landing', name);
 }
 
 async function refreshFiles() {
@@ -159,7 +169,7 @@ async function goChat(name) {
 
 // --- восстановление чата по ссылке ?session=<id> (кнопка « чат» в панели) ---
 const restoreId = new URLSearchParams(location.search).get('session');
-if (restoreId) restoreSession(restoreId);
+
 
 async function restoreSession(id) {
   try {
@@ -173,26 +183,13 @@ async function restoreSession(id) {
       if (m.role === 'user') addMsg('user', m.content);
       else if (m.role === 'assistant' && m.content) addMsg('agent', m.content);
     }
-    // предпросмотр последнего сохранённого результата этого чата
-    for (let i = data.messages.length - 1; i >= 0; i--) {
-      const m = data.messages[i];
-      if (m.role !== 'assistant' || !m.tool_calls) continue;
-      let presName = null, htmlName = null;
-      for (const call of m.tool_calls) {
-        try {
-          const args = JSON.parse(call.function.arguments || '{}');
-          if (call.function.name === 'save_presentation') presName = args.name;
-          if (call.function.name === 'save_html') htmlName = args.name;
-        } catch (_) {}
-      }
-      if (presName || htmlName) {
-        // сервер сохраняет под слагом (пробелы/знаки -> _), зеркало _safe_name
-        const slug = s => String(s).replace(/[^\p{L}\p{N}_-]/gu, '_');
-        const anchor = addMsg('agent', '— последний результат этого чата:');
-        if (presName) renderSlidesPreview(anchor, slug(presName));
-        if (htmlName) renderHtmlPreview(anchor, slug(htmlName));
-        break;
-      }
+    document.getElementById('outformat').value = data.chosen_format || '';
+    document.getElementById('template').value = data.chosen_template || '';
+    document.getElementById('landing-profile').value = data.chosen_landing_profile || '';
+    document.getElementById('no-template-photos').checked = data.chosen_template_images === 'remove';
+    updateFormatControls();
+    if (data.saved && (data.saved.presentation || data.saved.html)) {
+      addMsg('agent', 'Результат чата', null, null, data.saved);
     }
   } catch (err) {
     console.error('не удалось восстановить сессию:', err);
@@ -202,7 +199,7 @@ async function restoreSession(id) {
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text) return;
+  if (!text || sendBtn.disabled) return;
   input.value = '';
   sendBtn.disabled = true;
   addMsg('user', text);
@@ -214,13 +211,16 @@ form.addEventListener('submit', async (e) => {
       body: JSON.stringify({message: text, session_id: sessionId,
         template: document.getElementById('template').value,
         template_images: document.getElementById('no-template-photos').checked ? 'remove' : '',
+        landing_profile: document.getElementById('landing-profile').value,
         output_format: document.getElementById('outformat').value}),
     });
     const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || 'Ошибка сервера');
     sessionId = data.session_id;
+    if (sessionId) history.replaceState(null, '', '/?session=' + encodeURIComponent(sessionId));
     if (data.presentation) setPresentation(data.presentation);
     thinking.remove();
-    refreshTemplates();
+    refreshChats();
     if (data.error) addMsg('agent', 'Ошибка: ' + data.error, data.tools);
     else addMsg('agent', data.answer, data.tools, data.validation, data.saved);
     refreshFiles();
@@ -234,25 +234,46 @@ form.addEventListener('submit', async (e) => {
 refreshFiles();
 
 // ---------- выбор шаблона презентаций ----------
-async function refreshTemplates() {
-  const [list, pref] = await Promise.all([
-    fetch('/api/templates').then(r => r.json()),
-    fetch('/api/templates/preferred').then(r => r.json()).catch(() => ({preferred: ''})),
-  ]);
-  const sel = document.getElementById('template');
-  const current = sel.value || pref.preferred;
-  sel.innerHTML = '<option value="">Авто — самый свежий загруженный</option>' +
-    list.files.map(f => '<option value="' + esc(f) + '">' + esc(f) + '</option>').join('');
-  sel.value = current;
+const formatEl = document.getElementById('outformat');
+const templateEl = document.getElementById('template');
+const profileEl = document.getElementById('landing-profile');
+let newestTemplate = '';
+function updateFormatControls() {
+  document.getElementById('deck-choice').hidden = formatEl.value === 'landing';
+  document.getElementById('landing-choice').hidden = formatEl.value === 'presentation';
+  const deckTemplate = templateEl.value || newestTemplate;
+  document.getElementById('photo-choice').hidden = formatEl.value === 'landing' || !/\.pdf$/i.test(deckTemplate);
 }
-document.getElementById('template').addEventListener('change', async e => {
-  await fetch('/api/templates/preferred', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name: e.target.value}),
-  });
+async function refreshTemplates(selectName) {
+  const list = await fetch('/api/templates').then(r => r.json());
+  newestTemplate = list.newest || '';
+  const previous = selectName ?? templateEl.value;
+  templateEl.replaceChildren(new Option('Авто — по последнему шаблону', ''), new Option('Без шаблона', '__none__'));
+  for (const file of list.files) templateEl.add(new Option(file, file));
+  templateEl.value = previous;
+  updateFormatControls();
+}
+templateEl.addEventListener('change', async () => {
+  updateFormatControls();
+  try {
+    const response = await fetch('/api/templates/preferred', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name: templateEl.value})
+    });
+    if (!response.ok) throw new Error('Не удалось запомнить шаблон для новых чатов.');
+  } catch (err) { note(err.message, true); }
 });
-refreshTemplates();
+formatEl.addEventListener('change', updateFormatControls);
+async function initializeSettings() {
+  const [pref, styles] = await Promise.all([
+    fetch('/api/templates/preferred').then(r => r.json()),
+    fetch('/api/landing/profiles').then(r => r.json())
+  ]);
+  for (const [id, label] of Object.entries(styles.profiles)) profileEl.add(new Option(label, id));
+  await refreshTemplates(pref.preferred || '');
+  if (restoreId) await restoreSession(restoreId);
+}
+initializeSettings().catch(err => note('Не удалось загрузить настройки: ' + err.message, true));
 
 // ---------- загрузка файлов: кнопки, drag&drop, вставка из буфера ----------
 document.getElementById('up-img').addEventListener('change', e => uploadInput(e));
@@ -266,7 +287,7 @@ async function uploadInput(e) {
 
 function kindOf(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
-  if (ext === 'pptx') return { url: '/api/templates', label: 'шаблон' };
+  if (['pptx', 'pdf'].includes(ext)) return { url: '/api/templates', label: 'шаблон' };
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) return { url: '/api/assets', label: 'изображение' };
   return null;
 }
@@ -274,7 +295,7 @@ function kindOf(file) {
 async function uploadOne(file) {
   const kind = kindOf(file);
   if (!kind) {
-    note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg) и шаблоны .pptx`, true);
+    note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg) и шаблоны .pptx и .pdf`, true);
     return;
   }
   const pill = note(` Загружаю «${file.name}» как ${kind.label}…`);
@@ -284,7 +305,8 @@ async function uploadOne(file) {
     const r = await fetch(kind.url, { method: 'POST', body: fd });
     const res = await r.json();
     if (res.ok) {
-      pill.textContent = ` «${res.name}» — ${kind.label} загружен. Агент видит файл через ${kind.url === '/api/assets' ? 'list_images' : 'list_templates'}.`;
+      pill.textContent = `Загружен файл «${res.name}».`;
+      if (kind.url === '/api/templates') await refreshTemplates(res.name);
     } else {
       pill.textContent = ` «${file.name}» не загружен: ${res.detail || 'ошибка сервера'}`;
       pill.classList.add('err');
@@ -294,7 +316,6 @@ async function uploadOne(file) {
     pill.classList.add('err');
   }
   refreshFiles();
-  refreshTemplates();
 }
 
 function note(text, isError) {

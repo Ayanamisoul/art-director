@@ -14,6 +14,7 @@
   header .spacer { flex: 1; }
   header button { padding: 8px 20px; border: none; border-radius: 8px; background: var(--accent); color: #14110f; font-weight: bold; cursor: pointer; }
   .layout { display: grid; grid-template-columns: 380px 1fr; height: calc(100vh - 53px); }
+  .slides-col { min-height: 0; display: flex; flex-direction: column; }
   .slides { overflow-y: auto; padding: 16px; border-right: 1px solid #2c2620; }
   .slide { background: var(--panel); border: 1px solid #2c2620; border-radius: 10px; padding: 12px; margin-bottom: 12px; }
   .slide .row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
@@ -27,6 +28,9 @@
   .meta label { font-size: 11px; color: #9a8f83; }
   .meta input[type=color] { padding: 2px; height: 34px; }
   .preview { overflow-y: auto; padding: 24px; display: flex; flex-direction: column; align-items: center; gap: 20px; }
+  .preview > img { width: 100%; max-width: 1180px; height: auto; }
+  .preview-note, .field-label { font-size: 13px; color: #bdb3a7; }
+  .field-label { display: block; margin-top: 8px; }
   /* --- предпросмотр: геометрия 1:1 с PPTX, размеры в % от ширины слайда (cqw) --- */
   .pv-slide { flex: none; width: 100%; max-width: 1180px; aspect-ratio: 16/9; border-radius: 6px;
     padding: 5.2%; container-type: inline-size; position: relative; overflow: hidden;
@@ -39,6 +43,11 @@
   .pv-content h3 { margin: 0 0 4cqw; font-size: 3.33cqw; font-weight: 700; }
   /* 22pt пункт = 2.29cqw; 14pt интервал = 1.46cqw */
   .pv-content ul { margin: 0; padding-left: 1.6cqw; }
+  .slide table, .pv-content table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .slide td { padding: 2px; }
+  .slide td input { min-width: 0; width: 100%; }
+  .pv-content td { font-size: 2cqw; padding: .5cqw; border-bottom: 1px solid #ddd; overflow-wrap: anywhere; }
+  .pv-content tr:first-child { background: #f5f2ef; font-weight: 700; }
   .pv-content li { font-size: 2.29cqw; margin-bottom: 1.46cqw; line-height: 1.35; }
   .pv-content.dense li { font-size: 1.87cqw; margin-bottom: 1cqw; }
   /* 44pt титул = 4.58cqw, 20pt подзаголовок = 2.08cqw, 40pt раздел = 4.17cqw */
@@ -60,14 +69,14 @@
   <span class="spacer"></span>
   <span id="status"></span>
   <button onclick="save()">Сохранить и пересобрать PPTX</button>
-  <button onclick="exportPdf()"> Сохранить в PDF</button>
+  <button onclick="exportPdf(this)">Сохранить в PDF</button>
 </header>
 <div class="layout">
   <div class="slides-col">
     <div class="meta">
-      <label>Название презентации</label><input id="p-title">
-      <label>Подзаголовок</label><input id="p-subtitle">
-      <label>Акцентный цвет</label><input id="p-accent" type="color">
+      <label for="p-title">Название презентации</label><input id="p-title">
+      <label for="p-subtitle">Подзаголовок</label><input id="p-subtitle">
+      <label for="p-accent" id="accent-label">Акцентный цвет</label><input id="p-accent" type="color">
     </div>
     <div class="slides" id="slides"></div>
     <div style="padding:0 16px 16px"><button class="add-btn" onclick="addSlide()">+ Добавить слайд</button></div>
@@ -75,29 +84,75 @@
   <div class="preview" id="preview"></div>
 </div>
 <script>
-const name = location.pathname.split('/').pop();
+const name = decodeURIComponent(location.pathname.split('/').pop());
+const deckUrl = '/api/presentation/' + encodeURIComponent(name);
 let data = { title: '', subtitle: '', slides: [], theme: {} };
 let ASSETS = [];
+let sourceFields = new Map();
+let dirty = false;
+let saving = false;
+let editVersion = 0;
+
+function changed() {
+  dirty = true;
+  editVersion++;
+  document.getElementById('status').textContent = 'Есть несохранённые изменения';
+  if (!data.theme?.template) renderPreview();
+}
 
 const KINDS = { title: 'Титульный', content: 'Текстовый', section: 'Раздел', closing: 'Финальный' };
 
 async function load() {
   const ar = await fetch('/api/assets');
   ASSETS = (await ar.json()).files;
-  const r = await fetch('/api/presentation/' + name);
+  const r = await fetch(deckUrl);
   if (!r.ok) { document.getElementById('status').textContent = 'не найдено: ' + name; return; }
   data = await r.json();
+  if (data.theme?.template && data.slides.some(s => s.source_slide)) {
+    const batches = new Set(data.slides.filter(s => s.source_slide)
+      .map(s => 1 + 20 * Math.floor((s.source_slide - 1) / 20)));
+    for (const start of batches) {
+      const outline = await fetch('/api/templates/' + encodeURIComponent(data.theme.template)
+        + '/outline?start=' + start + '&count=20')
+        .then(r => r.ok ? r.json() : null).catch(() => null);
+      for (const slide of outline?.slides || []) sourceFields.set(slide.source_slide, slide.fields);
+    }
+  }
   document.getElementById('p-title').value = data.title || '';
   document.getElementById('p-subtitle').value = data.subtitle || '';
-  document.getElementById('p-accent').value = '#' + ((data.theme && data.theme.accent) || '2E5E4E');
-  renderEditor(); renderPreview();
+  document.getElementById('p-accent').value = '#' + (data.theme?.accent || data.template_accent || '2E5E4E');
+  const inheritsPalette = /\.pdf$/i.test(data.theme?.template || '') || data.slides.every(s => s.source_slide);
+  if (inheritsPalette) {
+    document.getElementById('accent-label').textContent = 'Цвета исходного шаблона';
+    document.getElementById('p-accent').hidden = true;
+  }
+  for (const id of ['p-title', 'p-subtitle']) document.getElementById(id).oninput = changed;
+  document.getElementById('p-accent').oninput = e => {
+    data.theme = {...data.theme, accent: e.target.value.slice(1)};
+    changed();
+  };
+  renderEditor(); await refreshPreview();
 }
 
 function addSlide() {
   data.slides.push({ kind: 'content', title: 'Новый слайд', bullets: [''] });
-  renderEditor(); renderPreview();
+  renderEditor(); changed();
 }
-function delSlide(i) { data.slides.splice(i, 1); renderEditor(); renderPreview(); }
+function delSlide(i) { data.slides.splice(i, 1); renderEditor(); changed(); }
+
+function bulletText(items) {
+  return items.flatMap(item => typeof item === 'string' ? [item]
+    : [item.text, ...(item.sub || []).map(sub => '  ' + sub)]).join('\n');
+}
+function parseBullets(text) {
+  const items = [];
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue;
+    if (/^\s/.test(line) && items.length) items[items.length - 1].sub.push(line.trim());
+    else items.push({text: line.trim(), sub: []});
+  }
+  return items;
+}
 
 function renderEditor() {
   const box = document.getElementById('slides');
@@ -105,32 +160,121 @@ function renderEditor() {
   data.slides.forEach((s, i) => {
     const div = document.createElement('div');
     div.className = 'slide';
+    if (s.source_slide) {
+      div.innerHTML = '<div class="row"><span class="num"></span><button class="del" title="Удалить слайд">×</button></div>';
+      div.querySelector('.num').textContent = (i + 1) + ' · Исходный слайд ' + s.source_slide;
+      div.querySelector('.del').onclick = () => delSlide(i);
+      const original = sourceFields.get(s.source_slide) || {};
+      for (const [key, value] of Object.entries({...original, ...s.template_fields})) {
+        const label = document.createElement('label');
+        label.className = 'field-label';
+        label.textContent = 'Текстовое поле ' + key;
+        const input = document.createElement('textarea');
+        input.value = value;
+        input.oninput = () => {
+          s.template_fields ??= {};
+          if (original[key] === input.value) delete s.template_fields[key];
+          else s.template_fields[key] = input.value;
+          changed();
+        };
+        label.appendChild(input);
+        div.appendChild(label);
+      }
+      box.appendChild(div);
+      return;
+    }
     const isTitleLike = (s.kind === 'title' || s.kind === 'closing');
-    const imgOptions = ['<option value="">— без изображения —</option>']
-      .concat(ASSETS.map(a => `<option value="${a}" ${s.image === a ? 'selected' : ''}>${a}</option>`)).join('');
+    const showBody = !isTitleLike || s.bullets?.length || s.cards?.length || s.stats?.length || s.image;
     div.innerHTML = `
       <div class="row"><span class="num">${i + 1}</span>
         <select>${Object.entries(KINDS).map(([k, v]) =>
           `<option value="${k}" ${s.kind === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-        <button class="del" title="Удалить"></button></div>
-      <input class="t" placeholder="Заголовок слайда" value="${(s.title || '').replace(/"/g, '&quot;')}">
-      ${isTitleLike
-        ? `<input class="s" placeholder="Подзаголовок" value="${(s.subtitle || '').replace(/"/g, '&quot;')}">`
-        : `<textarea class="b" placeholder="Пункты — по одному на строку">${(s.bullets || []).join(String.fromCharCode(10))}</textarea>
-           <select class="img" title="Изображение на слайд">${imgOptions}</select>`}`;
-    div.querySelector('select').onchange = e => { s.kind = e.target.value; renderEditor(); renderPreview(); };
-    div.querySelector('.t').oninput = e => { s.title = e.target.value; renderPreview(); };
+        <button class="del" title="Удалить слайд">×</button></div>
+      <input class="t" placeholder="Заголовок слайда">
+      ${isTitleLike || s.subtitle ? '<input class="s" placeholder="Подзаголовок">' : ''}
+      ${showBody ? '<textarea class="b" aria-label="Пункты и подпункты" placeholder="Один пункт в строке, подпункты с отступом"></textarea><select class="img" title="Изображение на слайд"></select>' : ''}`;
+    div.querySelector('select').onchange = e => { s.kind = e.target.value; renderEditor(); changed(); };
+    div.querySelector('.t').value = s.title || '';
+    div.querySelector('.t').oninput = e => { s.title = e.target.value; changed(); };
     const sub = div.querySelector('.s');
-    if (sub) sub.oninput = e => { s.subtitle = e.target.value; renderPreview(); };
+    if (sub) {
+      sub.value = s.subtitle || '';
+      sub.oninput = e => { s.subtitle = e.target.value; changed(); };
+    }
     const bul = div.querySelector('.b');
-    if (bul) bul.oninput = e => {
-      s.bullets = e.target.value.split(String.fromCharCode(10)).filter(function (x) { return x.trim(); }).map(function (x) { return {text: x, sub: []}; });
-    };
+    if (bul) {
+      bul.value = bulletText(s.bullets || []);
+      bul.oninput = e => { s.bullets = parseBullets(e.target.value); changed(); };
+      bul.hidden = Boolean((s.cards?.length || s.table) && !s.bullets?.length);
+    }
+    if (s.table) {
+      const table = document.createElement('table');
+      table.setAttribute('aria-label', 'Данные слайда');
+      for (const [r, values] of [s.table.headers, ...s.table.rows].entries()) {
+        const row = table.insertRow();
+        values.forEach((value, c) => {
+          const field = document.createElement('input');
+          field.value = value;
+          field.setAttribute('aria-label', r ? 'Строка ' + r + ', ' + s.table.headers[c] : 'Заголовок колонки ' + (c + 1));
+          field.oninput = () => { values[c] = field.value; changed(); };
+          row.insertCell().appendChild(field);
+        });
+      }
+      div.appendChild(table);
+    }
+    for (const [group, caption, fields] of [
+      [s.cards, 'Карточка', [['title', 'Заголовок'], ['text', 'Текст']]],
+      [s.stats, 'Показатель', [['value', 'Значение'], ['caption', 'Подпись']]]
+    ]) {
+      for (const [index, item] of (group || []).entries()) {
+        for (const [key, fieldName] of fields) {
+          const label = document.createElement('label');
+          label.className = 'field-label';
+          label.textContent = caption + ' ' + (index + 1) + ' · ' + fieldName;
+          const field = document.createElement(key === 'text' ? 'textarea' : 'input');
+          field.value = item[key] || '';
+          field.oninput = () => { item[key] = field.value; changed(); };
+          label.appendChild(field);
+          div.appendChild(label);
+        }
+      }
+    }
     const imgSel = div.querySelector('.img');
-    if (imgSel) imgSel.onchange = e => { s.image = e.target.value || undefined; renderPreview(); };
+    if (imgSel) {
+      imgSel.add(new Option('— без изображения —', ''));
+      for (const asset of ASSETS) imgSel.add(new Option(asset, asset));
+      imgSel.value = s.image || '';
+      imgSel.onchange = e => { s.image = e.target.value || undefined; changed(); };
+    }
     div.querySelector('.del').onclick = () => delSlide(i);
     box.appendChild(div);
   });
+}
+
+async function refreshPreview() {
+  const box = document.getElementById('preview');
+  const info = await fetch(deckUrl + '/previews', {cache: 'no-store'})
+    .then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!data.theme?.template && (dirty || !info?.ready)) { renderPreview(); return; }
+  box.replaceChildren();
+  const note = document.createElement('p');
+  note.className = 'preview-note';
+  note.textContent = info?.ready ? 'Слайды сохранённой версии' : 'Предпросмотр шаблона недоступен.';
+  box.appendChild(note);
+  if (!info?.ready) {
+    const link = document.createElement('a');
+    link.href = '/files/' + encodeURIComponent(name) + '.pptx';
+    link.textContent = 'Открыть сохранённый PPTX';
+    box.appendChild(link);
+    return;
+  }
+  const revision = encodeURIComponent(info.version);
+  for (let i = 1; i <= info.count; i++) {
+    const img = document.createElement('img');
+    img.alt = 'Слайд ' + i;
+    img.src = '/previews/' + encodeURIComponent(name) + '/p' + i + '.png?v=' + revision;
+    box.appendChild(img);
+  }
 }
 
 function renderPreview() {
@@ -139,7 +283,11 @@ function renderPreview() {
   box.innerHTML = '';
   data.slides.forEach(s => {
     const div = document.createElement('div');
-    if (s.kind === 'title' || s.kind === 'closing') {
+    if (s.table) {
+      div.className = 'pv-slide pv-content';
+      div.innerHTML = '<h3>' + esc(s.title) + '</h3><table>' + [s.table.headers, ...s.table.rows]
+        .map(row => '<tr>' + row.map(value => '<td>' + esc(String(value)) + '</td>').join('') + '</tr>').join('') + '</table>';
+    } else if (s.kind === 'title' || s.kind === 'closing') {
       div.className = 'pv-slide pv-title-slide';
       div.style.background = '#1A2E28';
       div.innerHTML = `<h2>${esc(s.title)}</h2><p>${esc(s.subtitle || '')}</p>`;
@@ -150,7 +298,11 @@ function renderPreview() {
     } else {
       const dense = (s.bullets || []).length > 4;
       const text = `<h3 style="color:${accent}">${esc(s.title)}</h3>
-        <ul>${(s.bullets || []).map(b => `<li>${esc(bt(b))}</li>`).join('')}</ul>`;
+        <ul>${(s.bullets || []).map(b => {
+          const details = b.sub || [];
+          if (!details.length) return `<li>${esc(bt(b))}</li>`;
+          return `<li><strong>${esc(bt(b))}</strong><ul>${details.map(v => `<li>${esc(v)}</li>`).join('')}</ul></li>`;
+        }).join('')}</ul>`;
       div.className = 'pv-slide pv-content' + (dense ? ' dense' : '');
       div.innerHTML = `<div class="bar" style="background:${accent}"></div>` + (s.image
         ? `<div class="pv-flex"><div class="txt">${text}</div><img src="/assets/${encodeURIComponent(s.image)}"></div>`
@@ -162,33 +314,55 @@ function renderPreview() {
 function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
 function bt(b) { return typeof b === 'string' ? b : (b && b.text ? b.text : ''); }
 
-async function exportPdf() {
-  const btn = event.target;
+async function exportPdf(btn) {
+  if (saving || (dirty && !await save()) || dirty) return;
   btn.textContent = 'Готовлю PDF…';
   try {
-    const r = await fetch('/api/presentation/' + encodeURIComponent(name) + '/pdf', { method: 'POST' });
+    const r = await fetch(deckUrl + '/pdf', { method: 'POST' });
     const res = await r.json();
-    if (res.ok) { window.open('/files/' + encodeURIComponent(name) + '.pdf', '_blank'); btn.textContent = 'Сохранить в PDF'; }
+    if (res.ok) { window.open(res.file, '_blank'); btn.textContent = 'Сохранить в PDF'; }
     else { btn.textContent = ' ' + (res.detail || 'ошибка'); }
   } catch (err) { btn.textContent = ' ' + err; }
 }
 
 async function save() {
+  if (saving) return false;
+  saving = true;
+  const version = editVersion;
   data.title = document.getElementById('p-title').value;
   data.subtitle = document.getElementById('p-subtitle').value;
-  data.theme = { accent: document.getElementById('p-accent').value.slice(1) };
   const st = document.getElementById('status');
-  const r = await fetch('/api/presentation/' + name, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
-  });
-  const res = await r.json();
-  if (res.ok) {
-    st.className = 'ok';
-    st.innerHTML = 'Сохранено · <a href="' + res.file + '" target="_blank" style="color:#8c8">открыть PPTX</a>';
-  } else {
+  try {
+    const r = await fetch(deckUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+    });
+    const res = await r.json();
+    if (res.ok) {
+      dirty = editVersion !== version;
+      if (!dirty) {
+        const added = res.slides.length - data.slides.length;
+        data.slides = res.slides;
+        renderEditor();
+        st.className = 'ok';
+        st.textContent = added > 0 ? 'Сохранено. Слайдов после разбиения: ' + res.slides.length + ' · ' : 'Сохранено · ';
+        const link = document.createElement('a');
+        link.href = res.file;
+        link.target = '_blank';
+        link.textContent = 'открыть PPTX';
+        st.appendChild(link);
+      }
+      await refreshPreview();
+      return true;
+    }
     st.className = 'err';
     st.textContent = 'Замечания: ' + (res.issues || [res.detail]).join('; ');
+  } catch (err) {
+    st.className = 'err';
+    st.textContent = 'Не удалось сохранить: ' + err.message;
+  } finally {
+    saving = false;
   }
+  return false;
 }
 
 load();

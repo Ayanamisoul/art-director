@@ -11,7 +11,7 @@ ALLOWED_URL_PREFIXES = ("http://www.w3.org", "https://www.w3.org")
 
 def _visible_text(html: str) -> str:
     """Текст страницы без тегов, стилей и скриптов — для проверок языка."""
-    without_blocks = re.sub(r"<(style|script)[\s\S]*?</\1>", " ", html, flags=re.IGNORECASE)
+    without_blocks = re.sub(r"<(style|script|template)\b[\s\S]*?</\1>", " ", html, flags=re.IGNORECASE)
     return re.sub(r"<[^>]+>", " ", without_blocks)
 
 

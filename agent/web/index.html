@@ -4,11 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Арт-директор</title>
-<link rel="stylesheet" href="/static/style.css?v=2">
+<link rel="stylesheet" href="/static/style.css?v=3">
 </head>
 <body>
 <div class="layout">
-  <div id="dropzone"> Брось файлы сюда<small>картинки → изображения для презы · .pptx → шаблон презентации</small></div>
+  <div id="dropzone">Перетащите файлы сюда<small>Изображения, шаблоны PowerPoint и PDF</small></div>
   <div class="chat">
     <header>
       <h1>Арт-директор</h1>
@@ -16,13 +16,21 @@
     </header>
     <div id="focusbar"></div>
     <div id="messages"></div>
-    <div class="tplrow"><span>Формат:</span><select id="outformat">
+    <div class="tplrow"><label for="outformat">Формат</label><select id="outformat">
         <option value="">Авто — решает модель</option>
         <option value="presentation">Презентация (.pptx)</option>
         <option value="landing">Лендинг (сайт)</option>
-      </select><span>Шаблон:</span><select id="template"><option value="">Авто — самый свежий загруженный</option></select><label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="checkbox" id="no-template-photos" style="accent-color:var(--accent)">Без фото из шаблона</label></div>
+      </select>
+      <label id="deck-choice">Шаблон слайдов
+        <select id="template"><option value="">Авто</option></select>
+      </label>
+      <label id="photo-choice" hidden><input type="checkbox" id="no-template-photos">Без фото из PDF</label>
+      <label id="landing-choice">Образец лендинга
+        <select id="landing-profile"><option value="">Авто</option></select>
+      </label>
+    </div>
     <form class="composer" id="form">
-      <input id="input" placeholder="Например: сделай презентацию по железу для новичков по моему шаблону" autocomplete="off">
+      <textarea id="input" rows="2" aria-label="Сообщение" placeholder="Опишите задачу или вставьте исходный текст"></textarea>
       <button id="send" type="submit">Отправить</button>
     </form>
   </div>
@@ -31,9 +39,9 @@
     <button class="new-chat" onclick="location.href='/'"> Новый чат</button>
     <div class="hint">Всё сохраняется локально на этом компьютере.</div>
     <button class="upload-btn" onclick="document.getElementById('up-img').click()"> Загрузить изображение</button>
-    <button class="upload-btn" onclick="document.getElementById('up-tpl').click()"> Загрузить шаблон .pptx</button>
+    <button class="upload-btn" onclick="document.getElementById('up-tpl').click()">Загрузить шаблон PPTX или PDF</button>
     <input type="file" id="up-img" accept="image/*" multiple hidden>
-    <input type="file" id="up-tpl" accept=".pptx" hidden>
+    <input type="file" id="up-tpl" accept=".pptx,.pdf" hidden>
     <h2>Чаты</h2>
     <div id="chats"></div>
     <h2>Картинки</h2>
@@ -42,6 +50,6 @@
     <div id="files"></div>
   </aside>
 </div>
-<script src="/static/app.js?v=2"></script>
+<script src="/static/app.js?v=3"></script>
 </body>
 </html>

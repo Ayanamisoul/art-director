@@ -13,9 +13,19 @@ class PreferredTemplate(BaseModel):
     name: str = ""
 
 
+@router.get("/api/templates/{name}/outline")
+async def template_outline(name: str, start: int = 1, count: int = 5):
+    try:
+        return templates.read_template(name, start, count)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.get("/api/templates")
 async def list_templates():
-    return {"files": templates.list_names()}
+    return {"files": templates.list_names(), "newest": templates.newest()}
 
 
 @router.post("/api/templates")

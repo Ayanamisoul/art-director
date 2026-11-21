@@ -3,6 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from core import sessions
+from core.artifacts import saved_results
 
 router = APIRouter()
 
@@ -22,7 +23,10 @@ async def get_session(session_id: str):
     if state is None:
         raise HTTPException(404, "сессия не найдена")
     return {"id": state["id"], "presentation": state.get("presentation"),
-            "backend": state.get("backend"), "messages": state["messages"]}
+            "backend": state.get("backend"), "messages": state["messages"],
+            "saved": saved_results(state["messages"]),
+            **{key: state.get(key, "") for key in ("chosen_format", "chosen_template",
+                                                   "chosen_template_images", "chosen_landing_profile")}}
 
 
 @router.delete("/api/session/{session_id}")
