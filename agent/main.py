@@ -1,15 +1,4 @@
-"""CLI-оболочка агента — теперь с настоящим агентным циклом.
-
-Цикл: сообщение -> LLM -> если модель попросила инструмент, выполняем его
-через MCP и возвращаем результат модели -> повторяем, пока не получим
-обычный текстовый ответ. Максимум MAX_TOOL_ROUNDS вызовов подряд.
-
-Команды в чате:
-  /backend ollama|xkiro  — переключить бэкенд
-  /skill chat|landing    — переключить системный промпт (скилл)
-  /new                   — начать диалог заново
-  /exit                  — выйти
-"""
+"""Консольный чат и обработка вызовов инструментов через MCP."""
 import asyncio
 import json
 import sys
@@ -119,7 +108,7 @@ async def main() -> None:
                     skill_name = parts[1]
                     print(f"(скилл: {skill_name})\n")
                 else:
-                    print("Команды: /backend ollama|xkiro, /skill chat|landing, /new, /exit\n")
+                    print(f"Команды: /backend {'|'.join(BACKENDS)}, /skill {'|'.join(SKILLS)}, /new, /exit\n")
                 continue
 
             backend = BACKENDS[backend_name]

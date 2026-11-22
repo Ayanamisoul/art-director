@@ -1,4 +1,0 @@
-        for b in bullets:
-            if len(str(b)) > MAX_BULLET_LEN:
-                issues.append(f"слайд {i}: буллет длиннее {MAX_BULLET_LEN} символов — сократи")
-                break

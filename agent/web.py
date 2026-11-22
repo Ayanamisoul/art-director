@@ -71,7 +71,7 @@ _active_chats: set[str] = set()
 class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
-    backend: str | None = None      # ollama | xkiro | zai — переключатель из UI
+    backend: str | None = None
     template: str | None = None     # шаблон, выбранный пользователем в UI
     output_format: str | None = None  # presentation | landing | None = решает модель
     landing_profile: str | None = None

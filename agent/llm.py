@@ -1,6 +1,4 @@
-"""Единый клиент к LLM. Работает с любым OpenAI-совместимым API:
-локальная Ollama, шлюз xkiro, а в перспективе — Qwen на сервере Актиона.
-"""
+"""Клиент для API генерации текста с поддержкой вызова инструментов."""
 import json
 import urllib.request
 
@@ -21,7 +19,6 @@ def complete(base_url: str, api_key: str, model: str, messages: list[dict],
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
-            # без нормального User-Agent xkiro отвечает 403
             "User-Agent": "art-director-agent/0.1",
         },
     )
