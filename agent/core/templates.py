@@ -51,7 +51,7 @@ def set_preferred(name: str) -> str:
     return name
 
 
-def accept_upload_bytes(name: str, data: bytes) -> tuple[str, bool]:
+def accept_upload_bytes(name: str, data: bytes, *, prefer: bool = True) -> tuple[str, bool]:
     """Сохранить загруженный шаблон. Возвращает (имя, был_ли_перезаписан).
     Новый шаблон автоматически становится выбранным."""
     validate_upload_name(name)
@@ -70,7 +70,8 @@ def accept_upload_bytes(name: str, data: bytes) -> tuple[str, bool]:
         staged = Path(folder) / path.name
         staged.write_bytes(data)
         staged.replace(path)
-    set_preferred(path.name)
+    if prefer:
+        set_preferred(path.name)
     return path.name, replaced
 
 

@@ -7,6 +7,7 @@ HTTP-роутеры — в routers/. Здесь только чат-цикл а�
 и judge) и монтирование статики.
 """
 import asyncio
+import hashlib
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -18,13 +19,14 @@ except Exception:
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from config import BACKENDS
 from core import sessions as core_sessions
+from core import decks
 from core import templates as core_templates
 from core.artifacts import DATA_DIR, saved_results
 from core.landings import PROFILES
@@ -79,8 +81,41 @@ class ChatRequest(BaseModel):
 
 
 @app.get("/")
-async def index():
+async def index(session: str | None = None):
+    return FileResponse(WEB_DIR / ("index.html" if session else "create.html"))
+
+
+@app.get("/workspace")
+async def workspace():
     return FileResponse(WEB_DIR / "index.html")
+
+
+@app.post("/api/create-presentation")
+async def create_presentation(brief: str = Form(...), template: UploadFile | None = File(None)):
+    brief = brief.strip()
+    if not brief:
+        raise HTTPException(400, "Опишите тему презентации.")
+    chosen = "__none__"
+    if template and template.filename:
+        source = Path(template.filename).name
+        content = await template.read()
+        # Разные файлы с одинаковым названием должны оставаться доступны своим презентациям.
+        stored = f"{hashlib.sha256(content).hexdigest()[:16]}_{source}"
+        try:
+            chosen, _ = core_templates.accept_upload_bytes(stored, content, prefer=False)
+        except ValueError as exc:
+            raise HTTPException(400, f"Проверьте шаблон «{source}». Нужен читаемый PPTX или PDF без пароля.") from exc
+    state = core_sessions.ensure(None)
+    name = f"presentation_{state['id']}"
+    request = ChatRequest(message=brief, template=chosen, output_format="presentation")
+    result = await _chat_turn(request, state, create_name=name)
+    deck = decks.read_presentation(name) if (result.get("saved") or {}).get("presentation") == name else None
+    if deck is None or not decks.pptx_path(name).is_file():
+        if result.get("error"):
+            raise HTTPException(502, "Сервис генерации не ответил. Повторите попытку через минуту.")
+        raise HTTPException(422, "Собрать презентацию не удалось. Попробуйте уточнить тему или сократить исходный текст.")
+    return {"name": name, "title": deck["title"], "slides": len(deck["slides"]),
+            "session_id": state["id"], "file": f"/files/{name}.pptx", "validation": result["validation"]}
 
 
 @app.get("/api/landing/profiles")
@@ -134,7 +169,7 @@ async def chat_endpoint(req: ChatRequest):
         _active_chats.discard(session_id)
 
 
-async def _chat_turn(req: ChatRequest, state: dict):
+async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
     fmt = state.get("chosen_format") if req.output_format is None else req.output_format
     chosen = state.get("chosen_template", "") if req.template is None else req.template
     profile = state.get("chosen_landing_profile", "") if req.landing_profile is None else req.landing_profile
@@ -155,6 +190,11 @@ async def _chat_turn(req: ChatRequest, state: dict):
 
     # системный промпт пересобираем каждый ход: актуальные файлы + фокус сессии
     system = _system_prompt(state)
+    if create_name:
+        system += (f"\nСоздай готовую презентацию сейчас и сохрани её под именем {create_name}. "
+                   "По короткой теме самостоятельно составь план, подбери понятные примеры и вывод. "
+                   "Если аудитория и объём не указаны, ориентируйся на широкую аудиторию и 6–10 слайдов. "
+                   "Не запрашивай согласование плана. Сохрани числовые данные брифа и не выдумывай статистику.")
     if state["messages"] and state["messages"][0].get("role") == "system":
         state["messages"][0]["content"] = system
     else:
@@ -177,6 +217,9 @@ async def _chat_turn(req: ChatRequest, state: dict):
                        if name.casefold() in req.message.casefold()), "")
     selections = {"save_presentation": {"template": chosen or "__auto__"},
                   "save_landing": {"profile": profile or ""}}
+    if create_name:
+        selections["save_presentation"]["name"] = create_name
+        selections["get_presentation"] = {"name": create_name}
     if chosen and chosen != "__none__":
         selections["read_template"] = {"name": chosen}
     if req.template_images is not None or state.get("chosen_template_images"):
@@ -188,6 +231,10 @@ async def _chat_turn(req: ChatRequest, state: dict):
 
     try:
         answer = await reply()
+        if create_name and not saved_results(state["messages"][start:])["presentation"]:
+            state["messages"].append({"role": "user", "content":
+                "Файл ещё не сохранён. Исправь замечания сборщика и вызови save_presentation с готовыми слайдами."})
+            answer = await reply()
     except Exception as exc:
         del state["messages"][start:]
         core_sessions.save(state)
