@@ -6,6 +6,71 @@ const drop = document.querySelector('#drop');
 const remove = document.querySelector('#remove');
 const statusLine = document.querySelector('#status');
 const result = document.querySelector('#result');
+const viewer = document.querySelector('#viewer');
+const slideImage = document.querySelector('#slide-image');
+const previous = document.querySelector('#previous');
+const next = document.querySelector('#next');
+const previewNote = document.querySelector('#preview-note');
+const retryPreview = document.querySelector('#retry-preview');
+const useSample = document.querySelector('#use-sample');
+let activeDeck = null;
+
+function showSlide(index) {
+  const deck = activeDeck;
+  if (!deck || index < 1 || index > deck.pages) return;
+  deck.index = index;
+  const label = 'Слайд ' + index + ' из ' + deck.pages;
+  document.querySelector('#position').textContent = label;
+  previous.disabled = index === 1;
+  next.disabled = index === deck.pages;
+  slideImage.alt = label;
+  slideImage.hidden = false;
+  previewNote.textContent = '';
+  retryPreview.hidden = true;
+  slideImage.src = '/previews/' + encodeURIComponent(deck.name) + '/p' + index + '.png?v=' + encodeURIComponent(deck.version);
+}
+
+previous.onclick = () => showSlide(activeDeck.index - 1);
+next.onclick = () => showSlide(activeDeck.index + 1);
+viewer.addEventListener('keydown', event => {
+  if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+    event.preventDefault();
+    showSlide(activeDeck.index + (event.key === 'ArrowLeft' ? -1 : 1));
+  }
+});
+slideImage.onerror = () => {
+  slideImage.hidden = true;
+  previewNote.textContent = 'Не удалось загрузить изображение слайда. Файл PowerPoint доступен ниже.';
+  retryPreview.hidden = false;
+};
+
+async function loadPreview(deck) {
+  viewer.hidden = true;
+  retryPreview.hidden = true;
+  previewNote.textContent = 'Открываем слайды…';
+  try {
+    const response = await fetch('/api/presentation/' + encodeURIComponent(deck.name) + '/previews', {cache: 'no-store'});
+    if (!response.ok) throw new Error();
+    const info = await response.json();
+    if (activeDeck !== deck) return;
+    if (!info.ready || !info.count) throw new Error();
+    deck.pages = info.count;
+    deck.version = info.version;
+    viewer.hidden = false;
+    showSlide(Math.min(deck.index, deck.pages));
+  } catch {
+    if (activeDeck !== deck) return;
+    previewNote.textContent = 'Предпросмотр пока недоступен. Можно скачать PowerPoint или открыть редактор.';
+    retryPreview.hidden = false;
+  }
+}
+retryPreview.onclick = () => loadPreview(activeDeck);
+useSample.onclick = () => {
+  brief.value = 'Объясни начинающим, как планировать неделю. Сделай 4 слайда с конкретным примером и коротким заданием в конце.';
+  useSample.disabled = true;
+  brief.setCustomValidity('');
+  brief.focus();
+};
 
 function report(message, error = false) {
   statusLine.textContent = message;
@@ -29,7 +94,10 @@ remove.addEventListener('click', () => {
   updateFile();
   template.focus();
 });
-brief.addEventListener('input', () => brief.setCustomValidity(''));
+brief.addEventListener('input', () => {
+  brief.setCustomValidity('');
+  useSample.disabled = !!brief.value.trim();
+});
 
 form.addEventListener('submit', async event => {
   event.preventDefault();
@@ -43,7 +111,7 @@ form.addEventListener('submit', async event => {
   if (!template.files.length) data.delete('template');
   fields.disabled = true;
   form.setAttribute('aria-busy', 'true');
-  result.hidden = true;
+  useSample.disabled = true;
   report('Готовим слайды и проверяем содержание. Это может занять несколько минут.');
   try {
     const response = await fetch(form.action, {method: 'POST', body: data});
@@ -67,11 +135,16 @@ form.addEventListener('submit', async event => {
     report(!issues.hidden ? 'Черновик готов. Проверьте замечания перед скачиванием.' :
       answer.validation?.raw ? 'Файл готов. Автоматическая проверка содержания недоступна.' : 'Презентация готова.');
     result.hidden = false;
-    download.focus();
+    document.querySelector('#sample').hidden = true;
+    activeDeck = {name: answer.name, pages: 0, index: 1, version: ''};
+    loadPreview(activeDeck);
+    document.querySelector('#result-title').focus({preventScroll: true});
+    result.scrollIntoView({block: 'nearest'});
   } catch (error) {
     report(error instanceof TypeError ? 'Не удалось связаться с сайтом. Проверьте соединение и попробуйте снова.' : error.message, true);
   } finally {
     fields.disabled = false;
+    useSample.disabled = !!brief.value.trim();
     form.removeAttribute('aria-busy');
   }
 });

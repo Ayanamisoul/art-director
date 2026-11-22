@@ -4,18 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Арт-директор</title>
-<link rel="stylesheet" href="/static/style.css?v=3">
+<link rel="stylesheet" href="/static/ui.css">
+<link rel="stylesheet" href="/static/style.css?v=4">
 </head>
 <body>
+<header class="site-header">
+  <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Арт-директор</a>
+  <nav class="site-nav" aria-label="Основная навигация"><a href="/">Создать</a><a href="/workspace" aria-current="page">Чаты и лендинги</a></nav>
+</header>
 <div class="layout">
   <div id="dropzone">Перетащите файлы сюда<small>Изображения, шаблоны PowerPoint и PDF</small></div>
   <div class="chat">
-    <header>
-      <h1>Арт-директор</h1>
-      <span style="font-size:12px; color:#9a8f83">Z.ai · GLM 5.3 Flash</span>
-    </header>
+    <h1>Рабочий чат</h1>
     <div id="focusbar"></div>
-    <div id="messages"></div>
+    <div id="messages" aria-label="Сообщения"><p class="empty-chat">Опишите задачу или выберите предыдущий чат из библиотеки.</p></div>
     <div class="tplrow"><label for="outformat">Формат</label><select id="outformat">
         <option value="">Авто — решает модель</option>
         <option value="presentation">Презентация (.pptx)</option>
@@ -35,9 +37,8 @@
     </form>
   </div>
   <aside>
-    <h2>Файлы</h2>
+    <h2>Библиотека</h2>
     <button class="new-chat" onclick="location.href='/workspace'">Новый чат</button>
-    <a class="file-link" href="/">Создать презентацию</a>
     <div class="hint">Всё сохраняется локально на этом компьютере.</div>
     <button class="upload-btn" onclick="document.getElementById('up-img').click()"> Загрузить изображение</button>
     <button class="upload-btn" onclick="document.getElementById('up-tpl').click()">Загрузить шаблон PPTX или PDF</button>
@@ -51,6 +52,6 @@
     <div id="files"></div>
   </aside>
 </div>
-<script src="/static/app.js?v=3"></script>
+<script src="/static/app.js?v=4"></script>
 </body>
 </html>

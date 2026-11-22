@@ -1,0 +1,60 @@
+.pv-slide { flex: none; width: 100%; max-width: 1180px; aspect-ratio: 16/9; border-radius: 6px;
+    padding: 5.2%; container-type: inline-size; position: relative; overflow: hidden;
+    box-shadow: 0 4px 24px rgba(0,0,0,.4); background: #fff; color: #2b2b2b; }
+  .pv-title-slide, .pv-closing { color: #fff; display: flex; flex-direction: column;
+    justify-content: center; align-items: center; text-align: center; }
+  .pv-section { display: flex; justify-content: center; align-items: center; color: #fff; }
+  .pv-content .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 1.35cqw; }
+  /* 32pt заголовок = 0.444in = 3.33% ширины слайда 13.333in */
+  .pv-content h3 { margin: 0 0 4cqw; font-size: 3.33cqw; font-weight: 700; }
+  /* 22pt пункт = 2.29cqw; 14pt интервал = 1.46cqw */
+  .pv-content ul { margin: 0; padding-left: 1.6cqw; }
+  .slide table, .pv-content table { width: 100%; table-layout: fixed; border-collapse: collapse; }
+  .slide td { padding: 2px; }
+  .slide td input { min-width: 0; width: 100%; }
+  .pv-content td { font-size: 2cqw; padding: .5cqw; border-bottom: 1px solid #ddd; overflow-wrap: anywhere; }
+  .pv-content tr:first-child { background: #f5f2ef; font-weight: 700; }
+  .pv-content li { font-size: 2.29cqw; margin-bottom: 1.46cqw; line-height: 1.35; }
+  .pv-content.dense li { font-size: 1.87cqw; margin-bottom: 1cqw; }
+  /* 44pt титул = 4.58cqw, 20pt подзаголовок = 2.08cqw, 40pt раздел = 4.17cqw */
+  .pv-title-slide h2, .pv-closing h2 { font-size: 4.58cqw; margin: 0 0 1.6cqw; }
+  .pv-title-slide p, .pv-closing p { font-size: 2.08cqw; opacity: .85; }
+  .pv-section h2 { font-size: 4.17cqw; }
+  /* картинка справа: в PPTX 5.2in из 13.333in = 39% ширины */
+  .pv-flex { display: flex; gap: 3.5cqw; height: 100%; align-items: flex-start; }
+  .pv-flex .txt { flex: 1 1 55%; min-width: 0; }
+  .pv-flex img { flex: 0 1 39%; max-height: 78%; object-fit: contain; border-radius: .5cqw; }
+body { height:100dvh; display:grid; grid-template-rows:auto auto minmax(0,1fr) }
+.editor-bar { display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px clamp(16px,3vw,48px); border-bottom:1px solid var(--line); background:var(--surface) }
+.editor-bar h1 { font-size:clamp(1.4rem,2.1vw,2.2rem); font-weight:650; letter-spacing:-.045em; margin:0 }
+.editor-bar > div { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto }
+#status { color:var(--muted); font-size:.88rem }
+#status.err { color:var(--error) } #status.ok { color:var(--accent) }
+.layout { display:grid; grid-template-columns:minmax(275px,350px) minmax(0,1fr); min-height:0 }
+.slides-col { min-height:0; overflow:auto; padding:18px; background:var(--surface); border-right:1px solid var(--line) }
+.meta { display:grid; gap:5px; margin-bottom:18px }
+.meta label,.field-label { font-size:.84rem; font-weight:600; color:var(--muted) }
+.meta label:not(:first-child) { margin-top:5px }
+.meta input,.slide select,.slide input,.slide textarea { width:100%; min-width:0; font-size:.92rem; padding:8px 10px }
+.meta input[type=color] { padding:2px; height:32px }
+.slide { background:var(--canvas); border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px }
+.slide .row { display:flex; gap:6px; align-items:center; margin-bottom:8px }
+.slide .num { color:var(--accent); font-weight:700; min-width:20px }
+.slide .del { background:none; color:var(--error); border:0; padding:6px; font-size:1rem }
+.slide input.t,.slide input.s,.slide textarea { margin-bottom:6px }
+.slide textarea { min-height:84px; resize:vertical }
+.slide .field-label { display:block; margin-top:7px }
+.add-btn { width:100%; border:1px dashed #8da695; background:var(--wash); color:var(--accent); border-radius:8px; padding:10px }
+.canvas { overflow:auto; min-width:0; min-height:0; padding:clamp(16px,2.4vw,36px) }
+.canvas h2 { font-size:1rem; margin:0 auto 14px; max-width:1180px }
+.preview { display:flex; flex-direction:column; align-items:center; gap:14px }
+.preview > img { width:100%; max-width:1180px; display:block; height:auto; border:1px solid var(--line); box-shadow:0 5px 18px #172c2610 }
+.preview-note { width:100%; max-width:1180px; font-size:.88rem; color:var(--muted); margin:0 }
+@media(max-width:730px) {
+ body { display:block; height:auto }
+ .editor-bar { gap:8px }
+ .editor-bar > div { margin-left:0; width:100% }
+ .layout { display:flex; flex-direction:column }
+ .slides-col { max-height:50vh; border-right:0; border-bottom:1px solid var(--line) }
+ .canvas { overflow:visible }
+}

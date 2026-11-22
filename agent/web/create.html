@@ -4,17 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Создать презентацию · Арт-директор</title>
-  <link rel="stylesheet" href="/static/create.css">
-  <script src="/static/create.js" defer></script>
+  <link rel="stylesheet" href="/static/ui.css">
+  <link rel="stylesheet" href="/static/create.css?v=2">
+  <script src="/static/create.js?v=2" defer></script>
 </head>
 <body>
-  <header>
+  <header class="site-header">
     <a class="brand" href="/"><span class="brand-mark" aria-hidden="true"></span>Арт-директор</a>
-    <a href="/workspace">Чаты и лендинги <span aria-hidden="true">↗</span></a>
+    <nav class="site-nav" aria-label="Основная навигация"><a href="/" aria-current="page">Создать</a><a href="/workspace">Чаты и лендинги</a></nav>
   </header>
   <main>
-    <h1>Создать презентацию</h1>
-    <p class="intro">Опишите задачу своими словами. Можно приложить образец оформления или начать с чистого листа.</p>
+    <h1>Новая презентация</h1>
+    <p class="intro">Опишите задачу и приложите шаблон. Готовые слайды появятся здесь.</p>
+    <div class="studio"><div>
     <form id="creator" action="/api/create-presentation" method="post" enctype="multipart/form-data">
       <fieldset id="inputs">
         <label for="brief">О чём презентация?</label>
@@ -22,19 +24,33 @@
         <label for="template">Шаблон <span>по желанию</span></label>
         <div class="attachment" id="drop">
           <input type="file" name="template" id="template" accept=".pptx,.pdf">
-          <div aria-hidden="true"><b id="filename">Выберите или перетащите файл</b><small>PowerPoint (.pptx) или PDF</small></div>
+          <span class="upload-icon" aria-hidden="true">↑</span><div aria-hidden="true"><b id="filename">Выберите или перетащите файл</b><small>PowerPoint (.pptx) или PDF</small></div>
         </div>
         <button type="button" id="remove" class="quiet" hidden>Убрать шаблон</button>
-        <button type="submit" id="submit">Создать презентацию <span aria-hidden="true">→</span></button>
+        <button type="submit" id="submit" class="primary">Создать презентацию <span aria-hidden="true">→</span></button>
       </fieldset>
     </form>
     <p id="status" role="status" aria-live="polite"></p>
-    <section id="result" hidden aria-labelledby="result-title">
-      <h2 id="result-title"></h2>
-      <p id="count"></p>
+    </div><section class="stage" aria-labelledby="preview-heading">
+    <div class="stage-header"><h2 id="preview-heading">Предпросмотр</h2><span id="count">Пример темы</span></div>
+    <div id="sample">
+      <div class="sample-cover"><div class="week" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div><strong>Как планировать<br>неделю</strong></div>
+      <div class="sample-footer"><span>Практикум для начинающих</span><button id="use-sample" class="quiet" type="button">Взять эту тему</button></div>
+    </div>
+    <div id="result" hidden>
+      <h3 id="result-title" tabindex="-1"></h3>
+      <div id="viewer" hidden role="region" aria-label="Просмотр слайдов" tabindex="0">
+        <img id="slide-image" alt="">
+        <div class="viewer-tools"><span id="position" aria-live="polite"></span><div class="steps">
+          <button type="button" id="previous" class="secondary" aria-label="Предыдущий слайд">←</button>
+          <button type="button" id="next" class="secondary" aria-label="Следующий слайд">→</button>
+        </div></div>
+      </div>
+      <p id="preview-note" role="status"></p>
+      <button type="button" id="retry-preview" class="quiet" hidden>Обновить предпросмотр</button>
       <ul id="issues" hidden></ul>
-      <div class="actions"><a id="download" class="primary" download>Скачать PowerPoint</a><a id="edit">Посмотреть слайды</a><a id="chat">Попросить правки</a></div>
-    </section>
+      <div class="actions"><a id="download" class="primary" download>Скачать PowerPoint</a><a id="edit">Открыть редактор</a><a id="chat">Попросить правки</a></div>
+    </div></section></div>
   </main>
 </body>
 </html>
