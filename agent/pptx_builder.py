@@ -279,6 +279,11 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
     с нужными плейсхолдерами — фолбэк на лейауты, а без шаблона — собственный
     дизайн по умолчанию."""
     t = {**DEFAULT_THEME, **(theme or {})}
+    def save(prs):
+        if t.get("font_id"):
+            from core.fonts import embed, font_path
+            embed(prs, font_path(t["font_id"]))
+        prs.save(path)
     if any("source_slide" in sd or "template_fields" in sd for sd in data["slides"]):
         if not template or not template.is_file() or template.suffix.lower() != ".pptx":
             raise ValueError("Для редактирования полей нужен исходный шаблон .pptx")
@@ -292,7 +297,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
         prs = Presentation()
         render_pdf_template(prs, data["slides"], template, template_images,
                             SLIDE_W, _plain_bullets, _slide_image)
-        prs.save(path)
+        save(prs)
         return
     if template and template.exists():
         prs = Presentation(str(template))
@@ -300,7 +305,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
         if all("source_slide" in sd for sd in data["slides"]):
             if not _build_on_skeleton(prs, data, t):
                 raise ValueError("В исходной презентации нет слайдов")
-            prs.save(path)
+            save(prs)
             return
         if not (theme or {}).get("accent"):
             accent = theme_accent_from_template(template)
@@ -318,7 +323,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
                               logo_title=analysis.get("logo_first"),
                               logo_content=analysis.get("logo_content"),
                               logo_last=analysis.get("logo_last")):
-            prs.save(path)
+            save(prs)
             return
         # фолбэк: у шаблона нет слайдов с плейсхолдерами — собираем на лейаутах
         _wipe_template_slides(prs)
@@ -338,7 +343,7 @@ def build_presentation(path: Path, data: dict, theme: dict | None = None,
         prs.slide_height = SLIDE_H
         blank = prs.slide_layouts[6]
         _emit_slides(prs, data, t, blank, blank, blank, use_template_layouts=False)
-    prs.save(path)
+    save(prs)
 
 
 def _emit_slides(prs, data, t, title_layout, content_layout, section_layout,

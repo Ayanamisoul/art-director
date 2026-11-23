@@ -1,5 +1,11 @@
 """Картинки пользователя (data/assets/): загрузка, список, удаление."""
+import hashlib
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+import fitz
+from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS_DIR = ROOT / "data" / "assets"
@@ -10,6 +16,34 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp"}
 
 def list_names() -> list[str]:
     return sorted(p.name for p in ASSETS_DIR.iterdir() if p.is_file())
+
+
+def save_slide_upload(filename: str, data: bytes) -> str:
+    """Привязать изображение к брифу, сохранив отдельные версии одноимённых файлов."""
+    source = Path(filename.replace("\\", "/")).name
+    suffix = Path(source).suffix.lower()
+    if suffix not in IMAGE_EXTS:
+        raise ValueError(f"«{source}»: выберите файл изображения.")
+    digest = hashlib.sha256(data).hexdigest()[:16]
+    try:
+        if suffix == ".svg":
+            with fitz.open(stream=data, filetype="svg") as doc:
+                page = doc[0]
+                scale = 1600 / max(page.rect.width, page.rect.height)
+                data = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=True).tobytes("png")
+            source += ".png"
+        else:
+            with Image.open(BytesIO(data)) as image:
+                image.verify()
+    except (OSError, ValueError, RuntimeError, ZeroDivisionError, Image.DecompressionBombError) as exc:
+        raise ValueError(f"Не удалось прочитать изображение «{source}».") from exc
+    target = ASSETS_DIR / f"{digest}_{source}"
+    if not target.exists():
+        with TemporaryDirectory(dir=ASSETS_DIR) as temp:
+            staged = Path(temp) / "image"
+            staged.write_bytes(data)
+            staged.replace(target)
+    return target.name
 
 
 def accept_upload_bytes(name: str, data: bytes) -> tuple[str, bool]:

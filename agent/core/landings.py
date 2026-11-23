@@ -111,7 +111,7 @@ def _visual(profile: str, image: str) -> str:
 
 
 def render_landing(title: str, lead: str, sections: list[dict], profile: str,
-                   brand: str = "", cta: str = "", image: str = "") -> str:
+                   brand: str = "", cta: str = "", image: str = "", font_id: str = "") -> str:
     """Собрать адаптивную страницу. Ввод пользователя становится только текстом."""
     if profile not in PROFILES:
         raise ValueError(f"Неизвестный стиль лендинга. Доступны {', '.join(PROFILES)}.")
@@ -144,10 +144,16 @@ def render_landing(title: str, lead: str, sections: list[dict], profile: str,
         notice = (_STYLES / "fonts" / "OFL.txt").read_text(encoding="utf-8")
         license_notice = '<template id="font-license">' + escape(notice).replace(":", "&#58;") + '</template>'
 
+    css = _stylesheet(profile)
+    if font_id:
+        from core.fonts import font_path
+        url = _data_url("font/ttf", font_path(font_id).read_bytes())
+        css += (f"\n@font-face {{font-family: Uploaded; src: url('{url}') format('truetype');}}"
+                "\n:root {--font: Uploaded, sans-serif;}")
     return f"""<!DOCTYPE html>
 <html lang="ru" data-profile="{profile}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="{lead or title}"><title>{title}</title>
-<style>{_stylesheet(profile)}</style></head>
+<style>{css}</style></head>
 <body id="top">{header}<main><section class="hero"><div class="wrap hero-inner">{hero}</div></section>
 {chapters}</main>{footer}{license_notice}</body></html>"""

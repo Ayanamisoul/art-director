@@ -10,11 +10,12 @@ from pathlib import Path
 
 from core.artifacts import DATA_DIR
 from core.assets import ASSETS_DIR
+from core.fonts import font_path
 from core.previews import render_pptx_previews
 from core.templates import newest, preferred as preferred_template, template_path
 from pptx_builder import build_presentation, normalize_slide, validate_presentation
 from slide_content import paginate_slide, split_for_space
-from slide_layout import SlideFitError
+from slide_layout import SlideFitError, measure_with
 
 SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "pptx2pdf.ps1"
 
@@ -34,6 +35,13 @@ def sidecar_path(name: str) -> Path:
 
 def pptx_path(name: str) -> Path:
     return DATA_DIR / f"{_safe_name(name)}.pptx"
+
+
+def picture_names(name: str) -> set[str]:
+    from pptx import Presentation
+    deck = Presentation(pptx_path(name))
+    return {node.get("name") for slide in deck.slides for node in
+            slide._element.xpath(".//p:pic/p:nvPicPr/p:cNvPr")}
 
 
 def read_presentation(name: str) -> dict | None:
@@ -67,6 +75,10 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
     payload = {"title": title, "subtitle": subtitle, "slides": pages}
     old = read_presentation(name) or {}
     theme = {**(old.get("theme") or {}), **(theme or {})}
+    try:
+        custom_font = font_path(theme["font_id"]) if theme.get("font_id") else None
+    except ValueError as exc:
+        return [str(exc)]
     template_name = template or theme.get("template")
     if template_name == "__none__":
         theme.pop("template", None)
@@ -88,8 +100,9 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
         if issues:
             return issues
         try:
-            build_presentation(path, payload, theme or None, template=source,
-                               template_images=theme.get("template_images", "auto"))
+            with measure_with(custom_font):
+                build_presentation(path, payload, theme or None, template=source,
+                                   template_images=theme.get("template_images", "auto"))
             break
         except SlideFitError as exc:
             idx = exc.index
@@ -109,7 +122,8 @@ def save_edited(name: str, title: str, subtitle: str, slides: list[dict],
 
 def agent_save_presentation(name: str, title: str, slides: list[dict],
                             subtitle: str = "", accent_color: str = "",
-                            template: str = "", template_images: str | None = None) -> str:
+                            template: str = "", template_images: str | None = None,
+                            font_id: str = "") -> str:
     """Сборка по структуре от модели. Строка-ответ для модели (как в MCP-инструменте).
     Если template не передан — применяется выбранный пользователем (или свежий)."""
     if template == "__auto__":
@@ -117,6 +131,8 @@ def agent_save_presentation(name: str, title: str, slides: list[dict],
     elif not template and not sidecar_path(name).exists():
         template = preferred_template()
     theme = {"accent": accent_color.lstrip("#")} if accent_color else {}
+    if font_id:
+        theme["font_id"] = font_id
     issues = save_edited(name, title, subtitle, slides, theme, template, template_images)
     if issues:
         return ("Презентация НЕ сохранена. Исправь замечания и вызови save_presentation снова:\n- "

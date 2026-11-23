@@ -5,8 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Создать презентацию · Арт-директор</title>
   <link rel="stylesheet" href="/static/ui.css">
-  <link rel="stylesheet" href="/static/create.css?v=2">
-  <script src="/static/create.js?v=2" defer></script>
+  <link rel="stylesheet" href="/static/create.css?v=3">
+  <script src="/static/font-upload.js" defer></script>
+  <script src="/static/create.js?v=5" defer></script>
 </head>
 <body>
   <header class="site-header">
@@ -18,7 +19,7 @@
     <p class="intro">Опишите задачу и приложите шаблон. Готовые слайды появятся здесь.</p>
     <div class="studio"><div>
     <form id="creator" action="/api/create-presentation" method="post" enctype="multipart/form-data">
-      <fieldset id="inputs">
+      <fieldset id="inputs" disabled>
         <label for="brief">О чём презентация?</label>
         <textarea id="brief" name="brief" rows="5" required placeholder="Например, объясни первокурсникам, как работает память компьютера. На 8 слайдах, с примерами."></textarea>
         <label for="template">Шаблон <span>по желанию</span></label>
@@ -27,6 +28,18 @@
           <span class="upload-icon" aria-hidden="true">↑</span><div aria-hidden="true"><b id="filename">Выберите или перетащите файл</b><small>PowerPoint (.pptx) или PDF</small></div>
         </div>
         <button type="button" id="remove" class="quiet" hidden>Убрать шаблон</button>
+        <label for="images" class="image-label">Изображения для слайдов <span>по желанию</span></label>
+        <div class="attachment" id="image-drop">
+          <input type="file" id="images" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.bmp,.svg">
+          <span class="upload-icon" aria-hidden="true">+</span><div aria-hidden="true"><b>Добавить изображения</b><small>Выберите или перетащите фотографии, схемы и логотипы</small></div>
+        </div>
+        <ul id="attached-images" aria-label="Прикреплённые изображения"></ul>
+        <label for="font">Шрифт презентации <span>по желанию</span></label>
+        <div class="attachment">
+          <input type="file" id="font" accept=".ttf">
+          <span class="upload-icon" aria-hidden="true">Аа</span><div aria-hidden="true"><b id="font-name">Выбрать свой шрифт</b><small>Статический TrueType (.ttf), до 16 МБ</small></div>
+        </div>
+        <button type="button" id="remove-font" class="quiet" hidden>Убрать шрифт</button>
         <button type="submit" id="submit" class="primary">Создать презентацию <span aria-hidden="true">→</span></button>
       </fieldset>
     </form>

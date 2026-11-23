@@ -1,5 +1,6 @@
 """Измерение текста и размещение изображений в физических координатах слайда."""
 from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import lru_cache
 from io import BytesIO
 from math import floor
@@ -10,6 +11,18 @@ from PIL import Image, ImageFont, ImageOps
 
 class SlideFitError(ValueError):
     index = None
+
+
+_custom_face = ContextVar("custom_face", default=None)
+
+
+@contextmanager
+def measure_with(path):
+    token = _custom_face.set(path)
+    try:
+        yield
+    finally:
+        _custom_face.reset(token)
 
 
 @contextmanager
@@ -23,6 +36,8 @@ def fitting_slide(index):
 
 @lru_cache(maxsize=64)
 def _face(name):
+    if isinstance(name, Path):
+        return ImageFont.truetype(str(name), 100)
     # Pillow разбирает имена файлов системных шрифтов в Windows.
     family = name.casefold().replace(" ", "")
     filenames = {"segoeui": "segoeui", "segoeuisemibold": "seguisb",
@@ -36,8 +51,12 @@ def _face(name):
 
 
 @lru_cache(maxsize=8192)
-def _advance(word, font):
+def _cached_advance(word, font):
     return _face(font).getlength(word) / 100
+
+
+def _advance(word, font):
+    return _cached_advance(word, _custom_face.get() or font)
 
 
 def _measure(text, font):
@@ -117,5 +136,7 @@ def add_fitted_picture(slide, path, x, y, w, h):
         raise ValueError(f"Не удалось прочитать изображение «{path.name}».") from exc
     scale = min(w / iw, h / ih)
     pw, ph = max(1, round(iw * scale)), max(1, round(ih * scale))
-    return slide.shapes.add_picture(stream, int(x + (w-pw)/2), int(y + (h-ph)/2),
-                                    width=pw, height=ph)
+    picture = slide.shapes.add_picture(stream, int(x + (w-pw)/2), int(y + (h-ph)/2),
+                                       width=pw, height=ph)
+    picture.name = path.name
+    return picture

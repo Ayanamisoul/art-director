@@ -76,12 +76,15 @@ def read_landing(name: str) -> dict | None:
 
 
 def save_landing(name: str, title: str, lead: str, sections: list[dict],
-                 profile: str = "", brand: str = "", cta: str = "", image: str = "") -> str:
+                 profile: str = "", brand: str = "", cta: str = "", image: str = "",
+                 font_id: str = "") -> str:
     from core.landings import DEFAULT_PROFILE, render_landing
 
-    previous = read_landing(name) if not profile else None
+    previous = read_landing(name) or {}
     brief = dict(title=title, lead=lead, sections=sections, brand=brand, cta=cta,
-                 image=image, profile=profile or (previous or {}).get("profile") or DEFAULT_PROFILE)
+                 image=image, profile=profile or previous.get("profile") or DEFAULT_PROFILE)
+    if font_id or previous.get("font_id"):
+        brief["font_id"] = font_id or previous["font_id"]
     html = render_landing(**brief)
     # Escape '<' even inside a JSON string so user text cannot close the script element.
     encoded = json.dumps(brief, ensure_ascii=False).replace("<", r"\u003c")

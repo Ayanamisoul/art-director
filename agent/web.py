@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from config import BACKENDS
 from core import sessions as core_sessions
-from core import decks
+from core import decks, fonts
 from core import templates as core_templates
 from core.artifacts import DATA_DIR, saved_results
 from core.landings import PROFILES
@@ -71,6 +71,7 @@ _active_chats: set[str] = set()
 
 
 class ChatRequest(BaseModel):
+    font_id: str | None = None
     message: str
     session_id: str | None = None
     backend: str | None = None
@@ -90,8 +91,18 @@ async def workspace():
     return FileResponse(WEB_DIR / "index.html")
 
 
+@app.post("/api/fonts")
+async def upload_font(file: UploadFile):
+    try:
+        key, family = fonts.accept_font(await file.read(fonts.MAX_BYTES + 1))
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return {"id": key, "family": family}
+
+
 @app.post("/api/create-presentation")
-async def create_presentation(brief: str = Form(...), template: UploadFile | None = File(None)):
+async def create_presentation(brief: str = Form(...), template: UploadFile | None = File(None),
+                              image_names: list[str] | None = Form(None), font_id: str = Form("")):
     brief = brief.strip()
     if not brief:
         raise HTTPException(400, "Опишите тему презентации.")
@@ -105,7 +116,20 @@ async def create_presentation(brief: str = Form(...), template: UploadFile | Non
             chosen, _ = core_templates.accept_upload_bytes(stored, content, prefer=False)
         except ValueError as exc:
             raise HTTPException(400, f"Проверьте шаблон «{source}». Нужен читаемый PPTX или PDF без пароля.") from exc
+    attached = list(dict.fromkeys(image_names or []))
+    for filename in attached:
+        if Path(filename).name != filename or not (ASSETS_DIR / filename).is_file():
+            raise HTTPException(400, "Прикреплённое изображение отсутствует. Загрузите его ещё раз.")
+    if font_id:
+        try:
+            fonts.font_path(font_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     state = core_sessions.ensure(None)
+    if font_id:
+        state["font_id"] = font_id
+    if attached:
+        state["attached_images"] = attached
     name = f"presentation_{state['id']}"
     request = ChatRequest(message=brief, template=chosen, output_format="presentation")
     result = await _chat_turn(request, state, create_name=name)
@@ -128,7 +152,7 @@ async def editor_page(name: str):
     return FileResponse(WEB_DIR / "editor.html")
 
 
-def _system_prompt(state: dict) -> str:
+def _system_prompt(state: dict, *, form_images: bool = False) -> str:
     """Скилл + текущая обстановка: файлы пользователя и фокус сессии.
     Пересобирается каждый ход — модель всегда видит актуальные списки."""
     from core.assets import text_list as assets_text
@@ -149,7 +173,11 @@ def _system_prompt(state: dict) -> str:
             lines.append(f"Стиль лендинга выбран в интерфейсе: {state['chosen_landing_profile']}.")
         if state.get("landing"):
             lines.append(f"Последний лендинг — «{state['landing']}». Для правки вызови get_landing.")
-    if any(ASSETS_DIR.iterdir()):
+    if form_images and state.get("attached_images"):
+        lines.append("Пользователь приложил изображения к этой презентации. Размести каждое на подходящем "
+                     "содержательном слайде. В поле image передавай точное имя из списка.\n"
+                     + "\n".join(state["attached_images"]))
+    elif not form_images and any(ASSETS_DIR.iterdir()):
         lines.append(assets_text())
     if fmt in ("presentation", "landing"):
         lines.append("Пользователь выбрал формат " + ("презентации." if fmt == "presentation" else "лендинга."))
@@ -177,6 +205,12 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
         raise HTTPException(400, f"Шаблон «{chosen}» недоступен. Выберите другой шаблон.")
     if fmt != "presentation" and profile and profile not in PROFILES:
         raise HTTPException(400, "Неизвестный стиль лендинга")
+    if req.font_id:
+        try:
+            fonts.font_path(req.font_id)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        state["font_id"] = req.font_id
     if req.backend in BACKENDS:
         state["backend"] = req.backend
     if req.template is not None:
@@ -189,7 +223,7 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
         state["chosen_landing_profile"] = req.landing_profile
 
     # системный промпт пересобираем каждый ход: актуальные файлы + фокус сессии
-    system = _system_prompt(state)
+    system = _system_prompt(state, form_images=bool(create_name))
     if create_name:
         system += (f"\nСоздай готовую презентацию сейчас и сохрани её под именем {create_name}. "
                    "По короткой теме самостоятельно составь план, подбери понятные примеры и вывод. "
@@ -220,6 +254,9 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
     if create_name:
         selections["save_presentation"]["name"] = create_name
         selections["get_presentation"] = {"name": create_name}
+    if state.get("font_id"):
+        selections["save_presentation"]["font_id"] = state["font_id"]
+        selections["save_landing"]["font_id"] = state["font_id"]
     if chosen and chosen != "__none__":
         selections["read_template"] = {"name": chosen}
     if req.template_images is not None or state.get("chosen_template_images"):
@@ -242,9 +279,19 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
 
     # --- семантическая валидация: судья сверяет результат с запросом ---
     validation = {"ok": True, "issues": []}
+    async def check_saved(artifact):
+        verdict = await asyncio.to_thread(semantic_check, backend, req.message, artifact)
+        if create_name and state.get("attached_images"):
+            used = decks.picture_names(create_name)
+            for filename in state["attached_images"]:
+                if filename not in used:
+                    verdict["issues"].append("Добавьте на слайд изображение " + filename)
+                    verdict["ok"] = False
+        return verdict
+
     artifact = _last_artifact_summary(saved_results(state["messages"][start:]))
     if artifact:
-        validation = await asyncio.to_thread(semantic_check, backend, req.message, artifact)
+        validation = await check_saved(artifact)
         if not validation["ok"]:
             feedback = ("Проверка качества нашла несоответствия запросу:\n- "
                         + "\n- ".join(validation["issues"])
@@ -256,7 +303,7 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
                 answer = f"(ошибка при исправлении: {exc})"
             artifact2 = _last_artifact_summary(saved_results(state["messages"][start:]))
             if artifact2:
-                validation = await asyncio.to_thread(semantic_check, backend, req.message, artifact2)
+                validation = await check_saved(artifact2)
 
     # --- что сохранили: для мгновенного предпросмотра в чате ---
     saved = saved_results(state["messages"][start:])

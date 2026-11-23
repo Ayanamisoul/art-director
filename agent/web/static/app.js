@@ -205,10 +205,13 @@ form.addEventListener('submit', async (e) => {
   addMsg('user', text);
   const thinking = addMsg('agent', 'Думаю…');
   try {
+    const fontInput = document.getElementById('chat-font');
+    const font = fontInput.files.length ? await uploadFont(fontInput.files[0]) : null;
     const r = await fetch('/api/chat', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({message: text, session_id: sessionId,
+        font_id: font?.id,
         template: document.getElementById('template').value,
         template_images: document.getElementById('no-template-photos').checked ? 'remove' : '',
         landing_profile: document.getElementById('landing-profile').value,
@@ -230,6 +233,7 @@ form.addEventListener('submit', async (e) => {
   sendBtn.disabled = false;
   input.focus();
 });
+sendBtn.disabled = false;
 
 refreshFiles();
 

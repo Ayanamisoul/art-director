@@ -31,14 +31,14 @@ def save_html(name: str, html: str) -> str:
 
 @mcp.tool()
 def save_landing(name: str, title: str, lead: str, sections: list[dict], profile: str = "",
-                 brand: str = "", cta: str = "", image: str = "") -> str:
+                 brand: str = "", cta: str = "", image: str = "", font_id: str = "") -> str:
     """Создать автономный HTML-лендинг по образцу. Передавай контент, оформление собирается локально.
     sections — разделы вида {title, text, items: [строки]}. lead — подзаголовок.
     В разделе можно передать subsections — список {title, text, items: [строки]}.
     profile — glavbuh (Главбух), school (Школа юриста), law (Нейропомощник юриста).
     Пустое значение сохраняет профиль при правке. brand, cta (кнопка перехода к разделу)
     и image (имя загруженного изображения) необязательны. Для правки сначала get_landing."""
-    return artifacts.save_landing(name, title, lead, sections, profile, brand, cta, image)
+    return artifacts.save_landing(name, title, lead, sections, profile, brand, cta, image, font_id)
 
 
 @mcp.tool()
@@ -60,7 +60,7 @@ def html_to_pdf(name: str) -> str:
 @mcp.tool()
 def save_presentation(name: str, title: str, slides: list[dict], subtitle: str = "",
                       accent_color: str = "", template_images: str | None = None,
-                      template: str = "") -> str:
+                      template: str = "", font_id: str = "") -> str:
     """Собрать и сохранить презентацию .pptx (открывается и редактируется в PowerPoint).
     name — короткое имя файла; title/subtitle — заголовок презентации;
     slides — список слайдов, каждый: {"kind": "title|text|section|closing",
@@ -92,7 +92,8 @@ def save_presentation(name: str, title: str, slides: list[dict], subtitle: str =
     Перед сохранением структура проверяется: при замечаниях файл НЕ создаётся —
     исправь их и вызови инструмент снова."""
     return decks.agent_save_presentation(name, title, slides, subtitle,
-                                         accent_color, template=template, template_images=template_images)
+                                         accent_color, template=template, template_images=template_images,
+                                         font_id=font_id)
 
 
 @mcp.tool()

@@ -30,10 +30,11 @@
       <label id="landing-choice">Образец лендинга
         <select id="landing-profile"><option value="">Авто</option></select>
       </label>
+      <label>Свой шрифт (.ttf)<input id="chat-font" type="file" accept=".ttf"></label>
     </div>
     <form class="composer" id="form">
       <textarea id="input" rows="2" aria-label="Сообщение" placeholder="Опишите задачу или вставьте исходный текст"></textarea>
-      <button id="send" type="submit">Отправить</button>
+      <button id="send" type="submit" disabled>Отправить</button>
     </form>
   </div>
   <aside>
@@ -52,6 +53,7 @@
     <div id="files"></div>
   </aside>
 </div>
-<script src="/static/app.js?v=4"></script>
+<script src="/static/font-upload.js"></script>
+<script src="/static/app.js?v=5"></script>
 </body>
 </html>

@@ -99,6 +99,78 @@ brief.addEventListener('input', () => {
   useSample.disabled = !!brief.value.trim();
 });
 
+const images = document.querySelector('#images');
+const imageDrop = document.querySelector('#image-drop');
+const imageList = document.querySelector('#attached-images');
+const attachedImages = new Map();
+const fontFile = document.querySelector('#font');
+const removeFont = document.querySelector('#remove-font');
+
+function updateFont() {
+  const file = fontFile.files[0];
+  document.querySelector('#font-name').textContent = file?.name || 'Выбрать свой шрифт';
+  removeFont.hidden = !file;
+  fontFile.setCustomValidity(file && (!/\.ttf$/i.test(file.name) || file.size > 16 * 1024 * 1024)
+    ? 'Выберите статический файл TTF размером до 16 МБ.' : '');
+  report(fontFile.validationMessage, !!fontFile.validationMessage);
+}
+fontFile.addEventListener('change', updateFont);
+removeFont.onclick = () => {
+  fontFile.value = '';
+  updateFont();
+  fontFile.focus();
+};
+
+function attachImage(file) {
+  if (!/\.(png|jpe?g|webp|gif|bmp|svg)$/i.test(file.name)) {
+    report('Файл «' + file.name + '» не добавлен. Выберите изображение.', true);
+    return;
+  }
+  const item = document.createElement('li');
+  const thumb = document.createElement('img');
+  thumb.alt = '';
+  thumb.src = URL.createObjectURL(file);
+  const label = document.createElement('span');
+  label.textContent = file.name;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = '×';
+  button.setAttribute('aria-label', 'Убрать ' + file.name);
+  button.onclick = () => {
+    attachedImages.delete(item);
+    URL.revokeObjectURL(thumb.src);
+    item.remove();
+    images.focus();
+  };
+  item.append(thumb, label, button);
+  imageList.append(item);
+  attachedImages.set(item, {file, savedName: null});
+}
+
+async function uploadImages() {
+  const names = [];
+  for (const attachment of attachedImages.values()) {
+    if (!attachment.savedName) {
+      const body = new FormData();
+      body.append('file', attachment.file);
+      body.append('slide_attachment', 'true');
+      const response = await fetch('/api/assets', {method: 'POST', body});
+      const saved = await response.json();
+      if (!response.ok || !saved.ok) throw new Error(saved.detail || 'Не удалось загрузить ' + attachment.file.name);
+      attachment.savedName = saved.name;
+    }
+    names.push(attachment.savedName);
+  }
+  return names;
+}
+images.addEventListener('change', () => {
+  report('');
+  for (const file of images.files) attachImage(file);
+  images.value = '';
+});
+imageDrop.addEventListener('dragover', () => imageDrop.classList.add('over'));
+for (const event of ['drop', 'dragleave']) imageDrop.addEventListener(event, () => imageDrop.classList.remove('over'));
+
 form.addEventListener('submit', async event => {
   event.preventDefault();
   if (fields.disabled) return;
@@ -114,6 +186,20 @@ form.addEventListener('submit', async event => {
   useSample.disabled = true;
   report('Готовим слайды и проверяем содержание. Это может занять несколько минут.');
   try {
+    if (fontFile.files.length) {
+      report('Проверяем шрифт…');
+      const font = await uploadFont(fontFile.files[0]);
+      data.set('font_id', font.id);
+      report('Готовим слайды со шрифтом ' + font.family + '…');
+    }
+    if (attachedImages.size) {
+      report('Загружаем изображения…');
+      const names = await uploadImages();
+      for (const name of names) data.append('image_names', name);
+      data.set('brief', brief.value.trim() + '\n\nРазмести на слайдах прикреплённые изображения. '
+        + 'Используй эти точные имена файлов в поле image:\n' + names.join('\n'));
+      report('Готовим слайды с вашими изображениями…');
+    }
     const response = await fetch(form.action, {method: 'POST', body: data});
     const answer = await response.json().catch(() => ({}));
     if (!response.ok || !answer.file) throw new Error(typeof answer.detail === 'string' ? answer.detail : 'Не удалось собрать презентацию.');
@@ -148,3 +234,4 @@ form.addEventListener('submit', async event => {
     form.removeAttribute('aria-busy');
   }
 });
+fields.disabled = false;
