@@ -1,6 +1,5 @@
 """Чтение правил оформления из HTML-примера: очистка, токены, CSS.
 
-Спека: docs/superpowers/specs/2026-11-23-landing-examples-design.md.
 Только stdlib — модуль используется и веб-приложением, и MCP-сервером.
 """
 import re
