@@ -107,6 +107,21 @@ class ValidatorTest(unittest.TestCase):
                " .hero-copy > .lead + .button { color: #333; }")
         self.assertEqual(landing_design.validate_profile_css(css), [])
 
+    def test_pseudo_details(self):
+        root = ":root { --ink: #111; --ground: #fff; } "
+        # пробелы внутри скобок псевдокласса — легальный CSS
+        for selector in (".chapter:nth-of-type( 3n )", ".hero:nth-child( 2n + 1 )"):
+            with self.subTest(selector=selector):
+                self.assertEqual(landing_design.validate_profile_css(
+                    root + selector + " { color: red; }"), [])
+        # неизвестные псевдоэлементы не проходят
+        for selector in (".hero::x", ".hero:hover::unknown"):
+            with self.subTest(selector=selector):
+                self.assertTrue(landing_design.validate_profile_css(
+                    root + selector + " { color: red; }"))
+        self.assertEqual(landing_design.validate_profile_css(
+            root + " .chapter::before, p::first-line { color: red; }"), [])
+
 
 class ReadDesignTest(unittest.TestCase):
     def _chat(self, *answers):

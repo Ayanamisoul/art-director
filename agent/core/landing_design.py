@@ -292,7 +292,7 @@ KNOWN_ELEMENTS = {"html", "body", "header", "footer", "main", "nav", "section", 
 KNOWN_PSEUDOS = {"root", "hover", "active", "focus", "focus-visible", "visited",
                  "first-child", "last-child", "first-of-type", "last-of-type",
                  "nth-child", "nth-of-type", "before", "after", "selection", "marker",
-                 "placeholder"}
+                 "placeholder", "first-line", "first-letter"}
 KNOWN_AT_RULES = {"@media", "@font-face"}
 MAX_CSS_SIZE = 48_000
 ROOT_ISSUE = "нет правила :root с переменными --ink и --ground"
@@ -302,6 +302,27 @@ DEFAULT_ROOT = (":root { --ink: #1A1A1A; --ground: #FFFFFF; --font: Arial, sans-
 _PART_RE = re.compile(r"^(?=[.a-zA-Z*:])[a-zA-Z*0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9_-]*)*"
                       r"(?:::?[a-zA-Z-]+(?:\([^()]*\))?)*$")
 _COMBINATOR_SPLIT = re.compile(r"\s*[\s>+~]\s*")
+_PAREN_GROUP = re.compile(r"\([^()]*\)")
+_PLACEHOLDER = "\x00{}\x00"
+
+
+def _split_segments(part: str) -> list[str]:
+    """Сегменты селектора по комбинаторам, не трогая скобки:
+    nth-of-type( 2n + 1 ) — один псевдокласс, а не три обломка."""
+    shielded: list[str] = []
+
+    def shield(match) -> str:
+        shielded.append(match.group(0))
+        return _PLACEHOLDER.format(len(shielded) - 1)
+
+    masked = _PAREN_GROUP.sub(shield, part)
+    segments = [seg for seg in _COMBINATOR_SPLIT.split(masked) if seg]
+    unshield = re.compile(_PLACEHOLDER.format(r"(\d+)"))
+
+    def restore(segment: str) -> str:
+        return unshield.sub(lambda m: shielded[int(m.group(1))], segment)
+
+    return [restore(seg).strip() for seg in segments]
 _URL_RE = re.compile(r"url\(([^)]*)\)", re.IGNORECASE)
 
 
@@ -311,7 +332,7 @@ def _selector_issues(selector: str) -> list[str]:
         part = part.strip()
         if not part:
             continue
-        for segment in _COMBINATOR_SPLIT.split(part):
+        for segment in _split_segments(part):
             segment = segment.strip()
             if not segment or not _PART_RE.match(segment):
                 issues.append(f"непонятный селектор «{segment}» в «{part.strip()}»")
@@ -322,7 +343,8 @@ def _selector_issues(selector: str) -> list[str]:
             for name in re.findall(r"\.([a-zA-Z][a-zA-Z0-9_-]*)", segment):
                 if name not in KNOWN_CLASSES:
                     issues.append(f"класс «.{name}» не входит в структуру лендинга")
-            for pseudo in re.findall(r"(?<!:):(?!:)([a-zA-Z-]+)", segment):
+            for pseudo in (re.findall(r"::([a-zA-Z-]+)", segment)
+                           + re.findall(r"(?<!:):(?!:)([a-zA-Z-]+)", segment)):
                 if pseudo not in KNOWN_PSEUDOS:
                     issues.append(f"псевдокласс «:{pseudo}» не разрешён")
     return issues
