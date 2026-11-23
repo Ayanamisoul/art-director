@@ -35,7 +35,9 @@ def save_landing(name: str, title: str, lead: str, sections: list[dict], profile
     """Создать автономный HTML-лендинг по образцу. Передавай контент, оформление собирается локально.
     sections — разделы вида {title, text, items: [строки]}. lead — подзаголовок.
     В разделе можно передать subsections — список {title, text, items: [строки]}.
-    profile — glavbuh (Главбух), school (Школа юриста), law (Нейропомощник юриста).
+    profile — glavbuh (Главбух), school (Школа юриста), law (Нейропомощник юриста)
+    либо имя загруженного примера лендинга (.html); при неизвестном значении
+    сборщик перечислит доступные профили и примеры.
     Пустое значение сохраняет профиль при правке. brand, cta (кнопка перехода к разделу)
     и image (имя загруженного изображения) необязательны. Для правки сначала get_landing."""
     return artifacts.save_landing(name, title, lead, sections, profile, brand, cta, image, font_id)

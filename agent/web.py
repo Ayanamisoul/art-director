@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from config import BACKENDS
 from core import sessions as core_sessions
 from core import decks, fonts
+from core import landing_examples
 from core import templates as core_templates
 from core.artifacts import DATA_DIR, saved_results
 from core.landings import PROFILES
@@ -37,6 +38,7 @@ from mcp_client import MCPToolbox
 from prompts import SKILLS
 from routers import assets as assets_router
 from routers import files as files_router
+from routers import landing_examples as landing_examples_router
 from routers import sessions as sessions_router
 from routers import templates as templates_router
 from main import agent_reply
@@ -65,6 +67,7 @@ app.include_router(sessions_router.router)
 app.include_router(templates_router.router)
 app.include_router(assets_router.router)
 app.include_router(files_router.router)
+app.include_router(landing_examples_router.router)
 
 core_sessions.load_all()
 _active_chats: set[str] = set()
@@ -144,7 +147,7 @@ async def create_presentation(brief: str = Form(...), template: UploadFile | Non
 
 @app.get("/api/landing/profiles")
 async def landing_profiles():
-    return {"profiles": PROFILES}
+    return {"profiles": PROFILES, "examples": landing_examples.list_names()}
 
 
 @app.get("/editor/{name}")
@@ -170,7 +173,14 @@ def _system_prompt(state: dict, *, form_images: bool = False) -> str:
             lines.append(f"Фокус чата — презентация «{state['presentation']}». Прочитай её перед правкой.")
     if fmt != "presentation":
         if state.get("chosen_landing_profile"):
-            lines.append(f"Стиль лендинга выбран в интерфейсе: {state['chosen_landing_profile']}.")
+            chosen_example = landing_examples.resolve(state["chosen_landing_profile"])
+            if chosen_example:
+                lines.append(f"Образец лендинга: {chosen_example}. Оформление примера "
+                             "применяется при сборке, передавай его имя в profile.")
+            else:
+                lines.append(f"Стиль лендинга выбран в интерфейсе: {state['chosen_landing_profile']}.")
+        elif landing_examples.list_names():
+            lines.append("Доступные примеры лендинга: " + ", ".join(landing_examples.list_names()) + ".")
         if state.get("landing"):
             lines.append(f"Последний лендинг — «{state['landing']}». Для правки вызови get_landing.")
     if form_images and state.get("attached_images"):
@@ -203,7 +213,7 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
     profile = state.get("chosen_landing_profile", "") if req.landing_profile is None else req.landing_profile
     if fmt != "landing" and chosen and chosen != "__none__" and chosen not in core_templates.list_names():
         raise HTTPException(400, f"Шаблон «{chosen}» недоступен. Выберите другой шаблон.")
-    if fmt != "presentation" and profile and profile not in PROFILES:
+    if fmt != "presentation" and profile and not landing_examples.is_available_profile(profile):
         raise HTTPException(400, "Неизвестный стиль лендинга")
     if req.font_id:
         try:
@@ -246,6 +256,8 @@ async def _chat_turn(req: ChatRequest, state: dict, *, create_name: str = ""):
             if host in brief or PROFILES[key].casefold() in brief:
                 profile = key
                 break
+    if not profile and fmt != "presentation":
+        profile = landing_examples.newest()   # «Авто»: свежий пример, как у шаблонов
     if not chosen:
         chosen = next((name for name in core_templates.list_names()
                        if name.casefold() in req.message.casefold()), "")
