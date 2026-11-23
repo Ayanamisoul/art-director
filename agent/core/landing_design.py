@@ -5,6 +5,7 @@
 """
 import re
 from collections import Counter
+from html.parser import HTMLParser
 
 DEFAULTS = {
     "ground": "#ffffff",
@@ -277,3 +278,209 @@ details div {{ border: 1px solid {border}; border-radius: {tokens['radius']}; }}
 def _mix(first: str, second: str, fraction: float) -> str:
     a, b = _channels(first), _channels(second)
     return "#{:02X}{:02X}{:02X}".format(*(round(x + (y - x) * fraction) for x, y in zip(a, b)))
+
+
+# --- валидация CSS-профиля (белые списки под структуру render_landing) ---
+
+KNOWN_CLASSES = {"wrap", "bar", "footer-inner", "desktop-links", "wordmark", "hero",
+                 "hero-inner", "hero-copy", "hero-art", "hero-media", "lead", "button",
+                 "chapter", "chapter-inner", "chapter-content", "subsection",
+                 "section-text", "items", "mark", "law-title", "sculpture"}
+KNOWN_ELEMENTS = {"html", "body", "header", "footer", "main", "nav", "section", "article",
+                  "aside", "div", "span", "p", "a", "ul", "ol", "li", "h1", "h2", "h3",
+                  "img", "details", "summary", "button", "i", "em", "strong", "b"}
+KNOWN_PSEUDOS = {"root", "hover", "active", "focus", "focus-visible", "visited",
+                 "first-child", "last-child", "first-of-type", "last-of-type",
+                 "nth-child", "nth-of-type", "before", "after", "selection", "marker",
+                 "placeholder"}
+KNOWN_AT_RULES = {"@media", "@font-face"}
+MAX_CSS_SIZE = 48_000
+ROOT_ISSUE = "нет правила :root с переменными --ink и --ground"
+DEFAULT_ROOT = (":root { --ink: #1A1A1A; --ground: #FFFFFF; --font: Arial, sans-serif;"
+                " --width: 1220px; }\n")
+
+_PART_RE = re.compile(r"^(?=[.a-zA-Z*:])[a-zA-Z*0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9_-]*)*"
+                      r"(?:::?[a-zA-Z-]+(?:\([^()]*\))?)*$")
+_COMBINATOR_SPLIT = re.compile(r"\s*[\s>+~]\s*")
+_URL_RE = re.compile(r"url\(([^)]*)\)", re.IGNORECASE)
+
+
+def _selector_issues(selector: str) -> list[str]:
+    issues = []
+    for part in selector.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        for segment in _COMBINATOR_SPLIT.split(part):
+            segment = segment.strip()
+            if not segment or not _PART_RE.match(segment):
+                issues.append(f"непонятный селектор «{segment}» в «{part.strip()}»")
+                continue
+            element = re.match(r"[a-zA-Z][a-zA-Z0-9-]*", segment)
+            if element and element.group(0) not in KNOWN_ELEMENTS:
+                issues.append(f"тег «{element.group(0)}» не входит в структуру лендинга")
+            for name in re.findall(r"\.([a-zA-Z][a-zA-Z0-9_-]*)", segment):
+                if name not in KNOWN_CLASSES:
+                    issues.append(f"класс «.{name}» не входит в структуру лендинга")
+            for pseudo in re.findall(r"(?<!:):(?!:)([a-zA-Z-]+)", segment):
+                if pseudo not in KNOWN_PSEUDOS:
+                    issues.append(f"псевдокласс «:{pseudo}» не разрешён")
+    return issues
+
+
+def _walk_rules(css: str):
+    """Итератор (селектор, тело) верхнего уровня; @media — внутрь рекурсивно."""
+    index = 0
+    while True:
+        brace = css.find("{", index)
+        if brace == -1:
+            break
+        selector = css[index:brace].strip()
+        depth, cursor = 1, brace + 1
+        while cursor < len(css) and depth:
+            if css[cursor] == "{":
+                depth += 1
+            elif css[cursor] == "}":
+                depth -= 1
+            cursor += 1
+        yield selector, css[brace + 1:cursor - 1]
+        index = cursor
+
+
+def validate_profile_css(css: str) -> list[str]:
+    """Замечания к CSS-профилю. Пустой список — годен для встраивания."""
+    issues: list[str] = []
+    css = css.strip()
+    if len(css) > MAX_CSS_SIZE:
+        return [f"CSS больше {MAX_CSS_SIZE // 1000} КБ"]
+    if css.count("{") != css.count("}"):
+        issues.append("не сбалансированы фигурные скобки")
+    if "<" in css:
+        issues.append("в CSS не должно быть HTML-разметки")
+    for at_rule in set(re.findall(r"@[a-zA-Z-]+", css)):
+        if at_rule not in KNOWN_AT_RULES:
+            issues.append(f"at-правило {at_rule} не разрешено (допустимы @media и @font-face)")
+    for argument in (match.group(1).strip().strip("'\"") for match in _URL_RE.finditer(css)):
+        if not argument.casefold().startswith("data:"):
+            issues.append(f"внешний ресурс запрещён: url({argument[:60]})")
+    for selector, body in _walk_rules(css):
+        lowered = selector.casefold()
+        if lowered.startswith("@font-face"):
+            continue
+        if lowered.startswith("@media"):
+            issues.extend(_selector_issues(body.split("{", 1)[0]) if "{" not in body else [])
+            continue
+        issues.extend(_selector_issues(selector))
+    has_root = False
+    for selector, body in _walk_rules(css):
+        if selector.casefold().strip() == ":root":
+            has_root = "--ink" in body and "--ground" in body
+    if not has_root:
+        issues.append(ROOT_ISSUE)
+    return issues
+
+
+# --- дизайнерский вызов модели ---
+
+class DesignError(ValueError):
+    """Модель дважды не смогла дать годный CSS-профиль."""
+
+
+DESIGNER_SYSTEM = """Ты — веб-дизайнер. Тебе дают правила оформления HTML-примера\
+(стили и скелет структуры) и список классов целевого лендинга.
+Напиши CSS, переносящий оформление примера: фон страницы, шапку и подвал,
+первый экран (hero), типографику и кегли, отступы, кнопки, рамки фотографий,
+адаптив под узкий экран.
+Структура целевой страницы (менять нельзя, только стилизовать):
+header > .wrap.bar > .wordmark + nav(.desktop-links, details); main > section.hero
+> .wrap.hero-inner > .hero-copy(h1, p.lead, a.button) + .hero-media(img);
+section.chapter > .wrap.chapter-inner > h2 + .chapter-content(p.section-text,
+ul.items > li, section.subsection > h3); footer > .wrap.footer-inner.
+Обязательные правила: :root с переменными --ink, --ground, --font, --width.
+Запрещено: url() с внешними адресами (только data:), @import, @font-face
+с внешним src, селекторы вне перечисленных классов и тегов.
+Верни только CSS, без пояснений и markdown-рамок."""
+
+
+def prepare_model_input(html: str, *, style_cap: int = 24_000, skeleton_cap: int = 12_000) -> str:
+    """Компактный пакет «куда смотреть»: стили + скелет структуры."""
+    styles = "\n".join(part.strip() for part in _STYLE_BLOCK_RE.findall(html) if part.strip())
+    if len(styles) > style_cap:
+        styles = styles[:style_cap] + "\n/* …стили обрезаны… */"
+    outline: list[str] = []
+
+    class Skeleton(HTMLParser):
+        depth = 0
+
+        def handle_starttag(self, tag, attrs):
+            nonlocal outline
+            if tag not in KNOWN_ELEMENTS and tag not in ("details", "summary"):
+                return
+            if len(outline) >= 120:
+                return
+            names = dict(attrs)
+            line = "  " * min(self.depth, 8) + tag
+            if names.get("class"):
+                line += "." + ".".join(names["class"].split()[:3])
+            if names.get("style"):
+                line += " style=" + names["style"][:120]
+            outline.append(line)
+            if tag not in ("img", "br", "hr", "input", "li", "span", "a", "i", "em",
+                           "strong", "b", "summary", "p", "h1", "h2", "h3"):
+                self.depth += 1
+
+        def handle_endtag(self, tag):
+            if tag not in ("img", "br", "hr", "input", "li", "span", "a", "i", "em",
+                           "strong", "b", "summary", "p", "h1", "h2", "h3"):
+                self.depth = max(0, self.depth - 1)
+
+    Skeleton().feed(html)
+    skeleton = "\n".join(outline)
+    if len(skeleton) > skeleton_cap:
+        skeleton = skeleton[:skeleton_cap] + "\n…"
+    return f"=== СТИЛИ ПРИМЕРА ===\n{styles}\n\n=== СКЕЛЕТ СТРУКТУРЫ ПРИМЕРА ===\n{skeleton}"
+
+
+def _strip_fences(answer: str) -> str:
+    text = answer.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-zA-Z]*\s*", "", text)
+        text = re.sub(r"\s*```$", "", text.strip())
+    return text.strip()
+
+
+def read_design(html_text: str, chat) -> str:
+    """Спросить модель о правилах оформления примера.
+
+    chat(system, user) -> str. Одна повторная попытка с перечнем ошибок;
+    после второй неудачи — DesignError. Отсутствующий :root дописываем сами.
+    """
+    payload = prepare_model_input(html_text)
+    feedback = ""
+    for _ in range(2):
+        answer = chat(DESIGNER_SYSTEM, payload + feedback)
+        css = _strip_fences(answer)
+        issues = validate_profile_css(css)
+        if issues == [ROOT_ISSUE]:
+            css = DEFAULT_ROOT + css
+            issues = validate_profile_css(css)
+        if not issues:
+            return css
+        feedback = ("\n\nПредыдущий CSS не прошёл проверку:\n- "
+                    + "\n- ".join(issues[:10]) + "\nИсправь и пришли CSS заново.")
+    raise DesignError("Модель не смогла дать годный CSS: " + "; ".join(issues[:5]))
+
+
+def model_designer():
+    """Вызвать настроенную модель проекта без инструментов (один текстовый ход)."""
+    import llm
+    from config import BACKENDS, DEFAULT_BACKEND
+
+    backend = BACKENDS[DEFAULT_BACKEND]
+
+    def chat(system: str, user: str) -> str:
+        return llm.chat(backend["base_url"], backend["api_key"], backend["model"],
+                        [{"role": "system", "content": system},
+                         {"role": "user", "content": user}])
+
+    return chat

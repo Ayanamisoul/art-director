@@ -71,3 +71,84 @@ class FallbackCssTest(unittest.TestCase):
         self.assertIn("#E3B7B2", css.upper())
         self.assertIn(".hero", css)
         self.assertIn("@media", css)
+        self.assertEqual(landing_design.validate_profile_css(css), [])
+
+
+GOOD_CSS = (":root { --ink: #111; --ground: #fff; }\n"
+            ".hero { background: #f0f0f0; }\n"
+            "@media (max-width: 740px) { .hero { padding: 20px; } }\n")
+
+
+class ValidatorTest(unittest.TestCase):
+    def test_accepts_good_css(self):
+        self.assertEqual(landing_design.validate_profile_css(GOOD_CSS), [])
+
+    def test_rejects_danger(self):
+        root = ":root { --ink: #111; --ground: #fff; } "
+        cases = (
+            (".hero { background: #fff; }", "нет :root с --ink/--ground"),
+            ("@import url('x.css');", "импорт"),
+            (root + ".hero { background: url(https://evil/x.png); }", "внешний url"),
+            (root + "@font-face { font-family: X; src: url(https://f.woff2); }", "внешний шрифт"),
+            (root + ".hero { color: red;", "скобки"),
+            (".weird-unknown { color: red; } " + root, "чужой селектор"),
+            (root + ".hero { background: url('javascript:alert(1)'); }", "javascript: url"),
+            ("#" * 50000, "лимит 48 КБ"),
+        )
+        for bad, why in cases:
+            with self.subTest(why=why):
+                self.assertTrue(landing_design.validate_profile_css(bad), why)
+
+    def test_allows_data_font_face_and_known_pseudos(self):
+        css = (root_ := ":root { --ink: #111; --ground: #fff; } "
+               "@font-face { font-family: F; src: url(data:font/woff2;base64,AA); }"
+               " .button:hover, .items li::before { color: red; }"
+               " .chapter:nth-of-type(3n) { background: #eee; }"
+               " .hero-copy > .lead + .button { color: #333; }")
+        self.assertEqual(landing_design.validate_profile_css(css), [])
+
+
+class ReadDesignTest(unittest.TestCase):
+    def _chat(self, *answers):
+        calls = []
+
+        def chat(system, user):
+            calls.append((system, user))
+            return answers[len(calls) - 1]
+        return chat, calls
+
+    def test_retries_then_succeeds_and_strips_fences(self):
+        chat, calls = self._chat(".hero {", "```css\n" + GOOD_CSS + "\n```")
+        css = landing_design.read_design(EXAMPLE, chat)
+        self.assertIn(":root", css)
+        self.assertNotIn("```", css)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("СКЕЛЕТ", calls[0][1].upper())   # модель получила подготовленный ввод
+
+    def test_raises_after_two_failures(self):
+        chat, _ = self._chat(".hero {", "@import url('x.css');")
+        with self.assertRaises(landing_design.DesignError):
+            landing_design.read_design(EXAMPLE, chat)
+
+    def test_prepends_missing_root(self):
+        chat, _ = self._chat(".hero { background: #f0f0f0; }")
+        css = landing_design.read_design(EXAMPLE, chat)
+        self.assertIn("--ink:", css)
+        self.assertIn("--ground:", css)
+
+    def test_model_designer_is_callable(self):
+        self.assertTrue(callable(landing_design.model_designer()))
+
+
+class PrepareInputTest(unittest.TestCase):
+    def test_bounded_and_labelled(self):
+        rules = " ".join(f".c{i} {{ color: #12345{i % 10}; }}" for i in range(1500))
+        big = ('<html><head><style>' + rules + '</style></head><body>'
+               + '<section class="hero"><h1 class="title">Заголовок</h1></section>'
+               + '<div class="chapter">Глава</div></body></html>')
+        payload = landing_design.prepare_model_input(big)
+        self.assertLess(len(payload), 60000)
+        self.assertIn("СТИЛИ", payload.upper())
+        self.assertIn("СКЕЛЕТ", payload.upper())
+        self.assertIn(".c0", payload)
+        self.assertIn("hero", payload)
