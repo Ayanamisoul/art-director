@@ -151,6 +151,12 @@ class ReadDesignTest(unittest.TestCase):
         self.assertIn("--ink:", css)
         self.assertIn("--ground:", css)
 
+    def test_designer_prompt_guides_blocks_and_sticky(self):
+        prompt = landing_design.DESIGNER_SYSTEM.casefold()
+        self.assertIn("sticky", prompt)
+        self.assertIn("блок", prompt)
+        self.assertIn("прилип", prompt)
+
     def test_model_designer_is_callable(self):
         self.assertTrue(callable(landing_design.model_designer()))
 
