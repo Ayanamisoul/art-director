@@ -78,14 +78,32 @@ def read_landing(name: str) -> dict | None:
 def save_landing(name: str, title: str, lead: str, sections: list[dict],
                  profile: str = "", brand: str = "", cta: str = "", image: str = "",
                  font_id: str = "") -> str:
-    from core.landings import DEFAULT_PROFILE, render_landing
+    from core import landing_examples
+    from core.landings import DEFAULT_PROFILE, PROFILES, render_landing
 
     previous = read_landing(name) or {}
     brief = dict(title=title, lead=lead, sections=sections, brand=brand, cta=cta,
                  image=image, profile=profile or previous.get("profile") or DEFAULT_PROFILE)
     if font_id or previous.get("font_id"):
         brief["font_id"] = font_id or previous["font_id"]
-    html = render_landing(**brief)
+
+    # Стиль-пример: CSS живёт в каталоге примеров, копия — рядом с артефактом,
+    # чтобы лендинг пересобирался и после удаления самого примера.
+    example_css = ""
+    sidecar = DATA_DIR / f"{safe_name(name)}.profile.css"
+    if brief["profile"] not in PROFILES:
+        canonical = landing_examples.resolve(brief["profile"])
+        if canonical:
+            live = landing_examples.profile_css_for(canonical) or ""
+            if live:
+                example_css = live
+                sidecar.write_text(live, encoding="utf-8")
+        if not example_css and sidecar.is_file():
+            example_css = sidecar.read_text(encoding="utf-8")
+    elif sidecar.is_file():
+        sidecar.unlink()  # стиль стал встроенным — копия примера больше не нужна
+
+    html = render_landing(**brief, example_css=example_css)
     # Escape '<' even inside a JSON string so user text cannot close the script element.
     encoded = json.dumps(brief, ensure_ascii=False).replace("<", r"\u003c")
     html = html.replace("</body>", f"{_BRIEF_TAG}{encoded}</script></body>")

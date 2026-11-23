@@ -8,7 +8,7 @@ from unittest.mock import patch
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "agent"))
-from core import assets
+from core import assets, landing_examples
 from core.landings import PROFILES, render_landing
 
 
@@ -82,6 +82,60 @@ class LandingRendererTest(unittest.TestCase):
             for invalid in ("../фото.png", "missing.png", "https://example.com/a.png"):
                 with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                     render_landing(*args, image=invalid)
+
+
+GOOD_CSS = ":root { --ink: #111; --ground: #fff; } .hero { background: #f0f0f0; }"
+SECTIONS = [{"title": "Раздел", "text": "Текст", "items": ["Пункт"]}]
+
+
+class ExampleProfileTest(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.enterContext(patch.object(landing_examples, "EXAMPLES_DIR", self.root))
+        from core import landing_design
+        self.enterContext(patch.object(landing_examples, "_CSS_CACHE", {}))
+        landing_examples.accept_upload_bytes(
+            "vp.html",
+            '<html><head><style>body { background: #101214; }</style></head><body></body></html>'.encode("utf-8"),
+            designer=lambda system, user: GOOD_CSS)
+
+    def test_render_landing_with_example_profile(self):
+        args = ("Тема", "Лид", SECTIONS, "vp.html")
+        html = render_landing(*args)
+        self.assertEqual(html, render_landing(*args))          # детерминизм
+        self.assertIn("--ink: #111", html)
+        doc = Document(html)
+        self.assertEqual(doc.attributes("html", "data-profile"), ["vp.html"])
+        self.assertFalse(doc.attributes("script", "src"))
+        self.assertFalse(doc.attributes("link", "href"))
+        self.assertTrue(any(tag == "h1" for tag, _ in doc.elements))
+
+    def test_error_lists_options(self):
+        with self.assertRaises(ValueError) as ctx:
+            render_landing("Тема", "", SECTIONS, "нет такого")
+        self.assertIn("glavbuh", str(ctx.exception))
+        self.assertIn("vp.html", str(ctx.exception))
+
+    def test_example_hero_has_no_sculpture(self):
+        html = render_landing("Тема", "", SECTIONS, "vp.html")
+        self.assertNotIn("sculpture", html)
+
+    def test_save_landing_roundtrip_after_example_deleted(self):
+        from core import artifacts
+        with tempfile.TemporaryDirectory() as folder:
+            with patch.object(artifacts, "DATA_DIR", Path(folder)):
+                artifacts.save_landing("page", "Тема", "Лид", SECTIONS, "vp.html")
+                self.assertTrue((Path(folder) / "page.profile.css").exists())
+                (self.root / "vp.html").unlink()
+                (self.root / "vp.css").unlink()
+                artifacts.save_landing("page", "Тема-2", "Лид", SECTIONS, "")
+                brief = artifacts.read_landing("page")
+                self.assertEqual(brief["profile"], "vp.html")
+                html = (Path(folder) / "page.html").read_text(encoding="utf-8")
+                self.assertIn("Тема-2", html)
+                self.assertIn("--ink: #111", html)   # стиль примера сохранился
 
 
 if __name__ == "__main__":

@@ -100,9 +100,11 @@ def _sections_html(sections: list[dict]) -> tuple[list[str], str]:
     return links, "".join(blocks)
 
 
-def _visual(profile: str, image: str) -> str:
+def _visual(profile: str, image: str, *, example: bool = False) -> str:
     if image:
         return f'<div class="hero-media"><img src="{_image_source(image)}" alt=""></div>'
+    if example:
+        return ""  # у примеров свой фон hero, без декоративной скульптуры
     if profile == "law":
         return '<span class="mark" aria-hidden="true"></span>'
     count = 24 if profile == "school" else 15
@@ -111,10 +113,26 @@ def _visual(profile: str, image: str) -> str:
 
 
 def render_landing(title: str, lead: str, sections: list[dict], profile: str,
-                   brand: str = "", cta: str = "", image: str = "", font_id: str = "") -> str:
-    """Собрать адаптивную страницу. Ввод пользователя становится только текстом."""
-    if profile not in PROFILES:
-        raise ValueError(f"Неизвестный стиль лендинга. Доступны {', '.join(PROFILES)}.")
+                   brand: str = "", cta: str = "", image: str = "", font_id: str = "",
+                   example_css: str = "") -> str:
+    """Собрать адаптивную страницу. Ввод пользователя становится только текстом.
+
+    profile — встроенный профиль или имя загруженного примера (.html).
+    example_css передаёт готовый CSS примера (боковая копия артефакта),
+    когда сам файл примера уже недоступен.
+    """
+    from core import landing_examples
+
+    is_example = profile not in PROFILES
+    if is_example and not example_css:
+        canonical = landing_examples.resolve(profile)
+        if canonical is None:
+            available = ", ".join([*PROFILES, *landing_examples.list_names()]) or "нет"
+            raise ValueError(f"Неизвестный стиль лендинга «{profile}». Доступны: {available}.")
+        profile = canonical
+        example_css = landing_examples.profile_css_for(canonical) or ""
+        if not example_css:
+            raise ValueError(f"Для примера «{canonical}» нет CSS-профиля. Загрузите файл заново.")
     if not isinstance(title, str) or not title.strip():
         raise ValueError("У лендинга должен быть заголовок.")
     links, chapters = _sections_html(sections)
@@ -129,7 +147,7 @@ def render_landing(title: str, lead: str, sections: list[dict], profile: str,
               if wordmark or nav else "")
     description = f'<p class="lead">{lead}</p>' if lead else ""
     action = f'<a class="button" href="#section-1">{cta}</a>' if cta and links else ""
-    artwork = _visual(profile, image.strip())
+    artwork = _visual(profile, image.strip(), example=is_example)
     if profile == "law":
         hero = (f'<div class="law-title">{artwork}<h1>{title}</h1></div>'
                 f'{description}{action}')
@@ -144,7 +162,7 @@ def render_landing(title: str, lead: str, sections: list[dict], profile: str,
         notice = (_STYLES / "fonts" / "OFL.txt").read_text(encoding="utf-8")
         license_notice = '<template id="font-license">' + escape(notice).replace(":", "&#58;") + '</template>'
 
-    css = _stylesheet(profile)
+    css = example_css or _stylesheet(profile)
     if font_id:
         from core.fonts import font_path
         url = _data_url("font/ttf", font_path(font_id).read_bytes())
