@@ -268,12 +268,21 @@ templateEl.addEventListener('change', async () => {
   } catch (err) { note(err.message, true); }
 });
 formatEl.addEventListener('change', updateFormatControls);
+async function refreshProfiles(selectName) {
+  const styles = await fetch('/api/landing/profiles').then(r => r.json());
+  const previous = selectName ?? profileEl.value;
+  profileEl.replaceChildren(new Option('Авто — встроенный стиль или свежий пример', ''));
+  for (const [id, label] of Object.entries(styles.profiles)) profileEl.add(new Option(label, id));
+  for (const name of styles.examples || []) profileEl.add(new Option(name, name));
+  profileEl.value = previous;
+}
 async function initializeSettings() {
   const [pref, styles] = await Promise.all([
     fetch('/api/templates/preferred').then(r => r.json()),
     fetch('/api/landing/profiles').then(r => r.json())
   ]);
   for (const [id, label] of Object.entries(styles.profiles)) profileEl.add(new Option(label, id));
+  for (const name of styles.examples || []) profileEl.add(new Option(name, name));
   await refreshTemplates(pref.preferred || '');
   if (restoreId) await restoreSession(restoreId);
 }
@@ -292,6 +301,7 @@ async function uploadInput(e) {
 function kindOf(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   if (['pptx', 'pdf'].includes(ext)) return { url: '/api/templates', label: 'шаблон' };
+  if (['html', 'htm'].includes(ext)) return { url: '/api/landing/examples', label: 'пример лендинга' };
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) return { url: '/api/assets', label: 'изображение' };
   return null;
 }
@@ -299,7 +309,7 @@ function kindOf(file) {
 async function uploadOne(file) {
   const kind = kindOf(file);
   if (!kind) {
-    note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg) и шаблоны .pptx и .pdf`, true);
+    note(`Файл «${file.name}» не принят: поддерживаются картинки (png/jpg/webp/gif/svg), шаблоны .pptx/.pdf и пример лендинга .html`, true);
     return;
   }
   const pill = note(` Загружаю «${file.name}» как ${kind.label}…`);
@@ -309,7 +319,15 @@ async function uploadOne(file) {
     const r = await fetch(kind.url, { method: 'POST', body: fd });
     const res = await r.json();
     if (res.ok) {
-      pill.textContent = `Загружен файл «${res.name}».`;
+      let text = `Загружен файл «${res.name}».`;
+      if (kind.url === '/api/landing/examples') {
+        await refreshProfiles(res.name);
+        text += res.css_source === 'model'
+          ? ' Модель прочитала правила оформления примера.'
+          : ' Стиль упрощён: ' + (res.notes || []).join(' ');
+        profileEl.value = res.name;
+      }
+      pill.textContent = text;
       if (kind.url === '/api/templates') await refreshTemplates(res.name);
     } else {
       pill.textContent = ` «${file.name}» не загружен: ${res.detail || 'ошибка сервера'}`;
